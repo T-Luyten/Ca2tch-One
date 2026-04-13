@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calcium Imaging Analyzer</title>
+  <link rel="stylesheet" href="style.css?v=20260412b">
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" defer></script>
+</head>
+<body>
+  <div id="header">
+    <h1>Ca²⁺ Imaging Analyzer</h1>
+    <label class="upload-label" for="source-file-input">Load ROI Source</label>
+    <input type="file" id="source-file-input" accept=".nd2" hidden>
+    <label class="upload-label" for="measure-file-input">Load Measurement</label>
+    <input type="file" id="measure-file-input" accept=".nd2" hidden>
+    <span id="file-info">ROI source: none | Measurement: none</span>
+    <span id="status-bar"></span>
+  </div>
+
+  <div id="main">
+    <!-- ── Image viewer ───────────────────────────── -->
+    <section id="viewer-section">
+      <div id="canvas-container">
+        <canvas id="image-canvas"></canvas>
+        <canvas id="roi-canvas"></canvas>
+      </div>
+
+      <div id="viewer-controls">
+        <!-- Frame slider -->
+        <div class="ctrl-row">
+          <span class="ctrl-label">Display</span>
+          <select id="active-view">
+            <option value="source">ROI source</option>
+            <option value="measure">Measurement</option>
+          </select>
+          <span class="ctrl-value" id="view-status"></span>
+        </div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">Frame</span>
+          <input type="range" id="frame-slider" min="0" max="0" value="0">
+          <span class="ctrl-value" id="frame-label">— / —</span>
+          <span class="ctrl-value" id="time-label"></span>
+        </div>
+        <!-- Channel + colormap -->
+        <div class="ctrl-row">
+          <span class="ctrl-label">Channel</span>
+          <select id="channel-select"></select>
+          <span class="ctrl-label" style="min-width:60px">Colormap</span>
+          <select id="colormap-select">
+            <option value="green">Green</option>
+            <option value="gray">Gray</option>
+            <option value="hot">Hot</option>
+          </select>
+        </div>
+        <!-- Contrast -->
+        <div class="ctrl-row">
+          <span class="ctrl-label">Contrast</span>
+          <span style="color:var(--muted)">Min</span>
+          <input type="number" id="contrast-min" step="1" value="0">
+          <span style="color:var(--muted)">Max</span>
+          <input type="number" id="contrast-max" step="1" value="65535">
+          <button id="auto-contrast-btn">Auto</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Controls sidebar ──────────────────────── -->
+    <aside id="controls-section">
+
+      <!-- Detection -->
+      <div class="panel">
+        <div class="panel-title">Dataset Pairing</div>
+        <div class="param-row">
+          <span class="param-label">ROIs are detected on the source file and measured on the measurement file.</span>
+        </div>
+        <button class="btn-full" id="transfer-rois-btn" disabled>Copy ROIs To Measurement</button>
+        <div id="transfer-status" style="color:var(--muted);font-size:11px;margin-top:4px;min-height:14px"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Cell Detection</div>
+
+        <div class="param-row">
+          <span class="param-label">Projection</span>
+          <select id="proj-type">
+            <option value="mean">Mean</option>
+            <option value="max">Max</option>
+            <option value="std">Std</option>
+          </select>
+        </div>
+
+        <div class="param-row">
+          <span class="param-label">Min size (px²)</span>
+          <input type="number" id="min-size" value="100" min="4" max="100000">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label">Max size (px²)</span>
+          <input type="number" id="max-size" value="10000" min="10">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label">Threshold adj.</span>
+          <input type="range" id="thresh-adj" min="0.2" max="3.0" step="0.05" value="1.0">
+          <span class="param-value" id="thresh-adj-val">1.00</span>
+        </div>
+
+        <div class="param-row">
+          <span class="param-label">Smooth σ (px)</span>
+          <input type="range" id="smooth-sigma" min="0.5" max="12" step="0.5" value="2.0">
+          <span class="param-value" id="smooth-sigma-val">2.0</span>
+        </div>
+
+        <button class="btn-full" id="detect-btn" disabled>Detect Cells On ROI Source</button>
+        <div id="detect-status" style="color:var(--muted);font-size:11px;margin-top:4px;min-height:14px"></div>
+      </div>
+
+      <!-- Background correction -->
+      <div class="panel">
+        <div class="panel-title">Background Correction</div>
+
+        <div class="param-row">
+          <span class="param-label">Mode</span>
+          <select id="bg-mode">
+            <option value="none">None</option>
+            <option value="auto">Auto</option>
+            <option value="manual">Manual ROI</option>
+          </select>
+        </div>
+
+        <!-- Auto options -->
+        <div id="bg-auto-opts" style="display:none">
+          <div class="param-row">
+            <span class="param-label">Darkest percentile</span>
+            <input type="range" id="bg-percentile" min="1" max="50" step="1" value="10">
+            <span class="param-value" id="bg-percentile-val">10%</span>
+          </div>
+          <div style="color:var(--muted);font-size:10px;margin-top:2px">
+            Uses darkest N% of non-cell pixels per frame
+          </div>
+        </div>
+
+        <!-- Manual options -->
+        <div id="bg-manual-opts" style="display:none">
+          <button id="bg-draw-btn" class="btn-full" style="margin-top:4px">Draw BG Region</button>
+          <div id="bg-draw-hint" style="color:var(--muted);font-size:10px;margin-top:4px">
+            Click to add points · Double-click to close · Esc to cancel
+          </div>
+          <button id="bg-clear-btn" style="margin-top:4px;width:100%;display:none">Clear BG Region</button>
+        </div>
+      </div>
+
+      <!-- Analysis -->
+      <div class="panel">
+        <div class="panel-title">Analysis</div>
+
+        <div class="param-row">
+          <span class="param-label">Mode</span>
+          <select id="analysis-mode">
+            <option value="single">Single channel</option>
+            <option value="ratio">Fura-2 ratio</option>
+          </select>
+        </div>
+
+        <!-- Ratio channel selectors (Fura-2 only) -->
+        <div id="ratio-opts" style="display:none">
+          <div class="param-row">
+            <span class="param-label">340 nm ch</span>
+            <select id="ratio-ch-num"></select>
+          </div>
+          <div class="param-row">
+            <span class="param-label">380 nm ch</span>
+            <select id="ratio-ch-den"></select>
+          </div>
+        </div>
+
+        <div class="param-row">
+          <span class="param-label">Baseline start (frame)</span>
+          <input type="number" id="baseline-start" value="0" min="0">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label">Baseline end (frame)</span>
+          <input type="number" id="baseline-end" value="10" min="1">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label">AUC start (frame)</span>
+          <input type="number" id="auc-start" value="0" min="0">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label">AUC end (frame)</span>
+          <input type="number" id="auc-end" value="0" min="1">
+        </div>
+
+        <button class="btn-full" id="analyze-btn" disabled>Analyze Measurement File</button>
+
+        <div class="btn-row" id="export-row" style="display:none">
+          <button id="export-raw-btn">Export Raw CSV</button>
+          <button id="export-df-btn">Export ΔF/F₀ CSV</button>
+        </div>
+      </div>
+
+      <!-- ROI list -->
+      <div class="panel" id="roi-panel">
+        <div id="roi-list-header">
+          <div class="panel-title">ROIs <span id="roi-count"></span></div>
+          <button id="sel-all-btn">All</button>
+          <button id="sel-none-btn">None</button>
+        </div>
+        <div id="roi-list"></div>
+      </div>
+
+    </aside>
+  </div>
+
+  <!-- ── Plots ──────────────────────────────────────── -->
+  <section id="plots-section">
+    <div id="plot-tabs">
+      <button class="tab-btn active" data-tab="raw" id="tab-raw">Raw Fluorescence (F)</button>
+      <button class="tab-btn" data-tab="delta" id="tab-delta">ΔF / F₀</button>
+      <button class="tab-btn" data-tab="summary" id="tab-summary">Summary</button>
+      <button class="tab-btn" data-tab="rise" id="tab-rise">Rate Of Rise</button>
+    </div>
+    <div id="plot-raw"     class="plot-pane"></div>
+    <div id="plot-delta"   class="plot-pane" style="display:none"></div>
+    <div id="plot-summary" class="plot-pane" style="display:none">
+      <div id="plot-peak"></div>
+      <div id="plot-auc"></div>
+    </div>
+    <div id="plot-rise" class="plot-pane" style="display:none"></div>
+  </section>
+
+  <script src="app.js?v=20260412b"></script>
+</body>
+</html>
