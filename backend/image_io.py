@@ -1,7 +1,8 @@
+import io
+
 import nd2
 import numpy as np
 from PIL import Image
-import io
 
 
 def load_nd2_file(filepath: str):
@@ -123,14 +124,49 @@ def get_projection(data, proj_type='mean', channel=0):
         return ch.mean(axis=0)
 
 
+def get_ratio_frame(data, t=0, ch_num=0, ch_den=1):
+    num = data[t, ch_num, :, :].astype(float)
+    den = data[t, ch_den, :, :].astype(float)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ratio = np.where(den > 0, num / den, np.nan)
+    return ratio
+
+
+def get_ratio_projection(data, proj_type='mean', ch_num=0, ch_den=1):
+    num = data[:, ch_num, :, :].astype(float)
+    den = data[:, ch_den, :, :].astype(float)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ratio = np.where(den > 0, num / den, np.nan)
+
+    if proj_type == 'max':
+        return np.nanmax(ratio, axis=0)
+    elif proj_type == 'std':
+        return np.nanstd(ratio, axis=0)
+    else:
+        return np.nanmean(ratio, axis=0)
+
+
 def compute_percentile_contrast(data, channel=0, p_low=1.0, p_high=99.5):
     sample = data[:, channel, :, :].ravel()
     return float(np.percentile(sample, p_low)), float(np.percentile(sample, p_high))
 
 
-def frame_to_png(frame_2d, contrast_min=None, contrast_max=None, colormap='green'):
-    """Convert 2D array to PNG bytes for browser display."""
+def compute_ratio_percentile_contrast(data, ch_num=0, ch_den=1, p_low=1.0, p_high=99.5):
+    ratio = get_ratio_projection(data, proj_type='mean', ch_num=ch_num, ch_den=ch_den)
+    finite = ratio[np.isfinite(ratio)]
+    if finite.size == 0:
+        return 0.0, 1.0
+    return float(np.percentile(finite, p_low)), float(np.percentile(finite, p_high))
+
+
+def frame_to_image(frame_2d, contrast_min=None, contrast_max=None, colormap='green'):
+    """Convert 2D array to a PIL image for browser display/export."""
     frame = frame_2d.astype(float)
+    if not np.isfinite(frame).any():
+        frame = np.zeros_like(frame, dtype=float)
+    else:
+        finite = frame[np.isfinite(frame)]
+        frame = np.where(np.isfinite(frame), frame, float(np.nanmedian(finite)))
 
     if contrast_min is None:
         contrast_min = float(np.percentile(frame, 1))
@@ -148,6 +184,39 @@ def frame_to_png(frame_2d, contrast_min=None, contrast_max=None, colormap='green
         rgb = np.zeros((*u8.shape, 3), dtype=np.uint8)
         rgb[:, :, 1] = u8
         img = Image.fromarray(rgb, mode='RGB')
+    elif colormap == 'red':
+        # Red — mCherry / RFP
+        u8 = (normalized * 255).astype(np.uint8)
+        rgb = np.zeros((*u8.shape, 3), dtype=np.uint8)
+        rgb[:, :, 0] = u8
+        img = Image.fromarray(rgb, mode='RGB')
+    elif colormap == 'orange':
+        # Orange — mCherry / tdTomato alternative
+        u8 = (normalized * 255).astype(np.uint8)
+        rgb = np.zeros((*u8.shape, 3), dtype=np.uint8)
+        rgb[:, :, 0] = u8
+        rgb[:, :, 1] = (normalized * 160).astype(np.uint8)
+        img = Image.fromarray(rgb, mode='RGB')
+    elif colormap == 'cyan':
+        # Cyan — CFP / Fura-2 340 nm
+        u8 = (normalized * 255).astype(np.uint8)
+        rgb = np.zeros((*u8.shape, 3), dtype=np.uint8)
+        rgb[:, :, 1] = u8
+        rgb[:, :, 2] = u8
+        img = Image.fromarray(rgb, mode='RGB')
+    elif colormap == 'magenta':
+        # Magenta — mVenus / YFP alternatives
+        u8 = (normalized * 255).astype(np.uint8)
+        rgb = np.zeros((*u8.shape, 3), dtype=np.uint8)
+        rgb[:, :, 0] = u8
+        rgb[:, :, 2] = u8
+        img = Image.fromarray(rgb, mode='RGB')
+    elif colormap == 'blue':
+        # Blue — DAPI / Hoechst
+        u8 = (normalized * 255).astype(np.uint8)
+        rgb = np.zeros((*u8.shape, 3), dtype=np.uint8)
+        rgb[:, :, 2] = u8
+        img = Image.fromarray(rgb, mode='RGB')
     elif colormap == 'hot':
         # Hot: black → red → yellow → white  (MATLAB-style)
         r = np.clip(normalized * 3,       0.0, 1.0)
@@ -155,8 +224,30 @@ def frame_to_png(frame_2d, contrast_min=None, contrast_max=None, colormap='green
         b = np.clip(normalized * 3 - 2.0, 0.0, 1.0)
         rgb = (np.stack([r, g, b], axis=-1) * 255).astype(np.uint8)
         img = Image.fromarray(rgb, mode='RGB')
+    elif colormap == 'rainbow':
+        # Blue → cyan → green → yellow → red
+        stops = np.array([0.0, 0.25, 0.5, 0.75, 1.0], dtype=float)
+        colors = np.array([
+            [0, 0, 255],
+            [0, 255, 255],
+            [0, 255, 0],
+            [255, 255, 0],
+            [255, 0, 0],
+        ], dtype=float)
+        r = np.interp(normalized, stops, colors[:, 0])
+        g = np.interp(normalized, stops, colors[:, 1])
+        b = np.interp(normalized, stops, colors[:, 2])
+        rgb = np.stack([r, g, b], axis=-1).astype(np.uint8)
+        img = Image.fromarray(rgb, mode='RGB')
     else:
         img = Image.fromarray((normalized * 255).astype(np.uint8), mode='L')
+
+    return img
+
+
+def frame_to_png(frame_2d, contrast_min=None, contrast_max=None, colormap='green'):
+    """Convert 2D array to PNG bytes for browser display."""
+    img = frame_to_image(frame_2d, contrast_min, contrast_max, colormap)
 
     buf = io.BytesIO()
     img.save(buf, format='PNG')

@@ -96,7 +96,50 @@ body {
   border-right: 1px solid var(--border);
 }
 
-#canvas-container {
+#viewer-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+}
+
+.viewer-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #0b1220;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.viewer-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.03);
+  border-bottom: 1px solid var(--border);
+}
+
+.viewer-pane-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.viewer-pane-status {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.canvas-container {
   position: relative;
   flex: 1;
   background: #000;
@@ -104,9 +147,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-height: 280px;
 }
 
-#canvas-container canvas {
+.canvas-container canvas {
   position: absolute;
   top: 50%;
   left: 50%;
@@ -114,8 +158,15 @@ body {
   image-rendering: pixelated;
 }
 
-#image-canvas { z-index: 1; }
-#roi-canvas   { z-index: 2; cursor: crosshair; }
+.canvas-container canvas:first-child { z-index: 1; }
+.canvas-container canvas:last-child  { z-index: 2; cursor: crosshair; }
+
+.viewer-controls {
+  padding: 10px 12px 12px;
+  background: rgba(255,255,255,0.02);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
 
 #viewer-controls {
   padding: 10px 12px 12px;
@@ -142,11 +193,6 @@ body {
   color: var(--muted);
   font-size: 11px;
   min-width: 55px;
-}
-
-#view-status {
-  min-width: 90px;
-  text-align: right;
 }
 
 input[type="range"] {
@@ -247,6 +293,17 @@ button:disabled { opacity: 0.38; cursor: not-allowed; }
 }
 .btn-row button { flex: 1; }
 
+.analysis-hint {
+  color: var(--muted);
+  font-size: 10px;
+  min-height: 14px;
+  margin: -2px 0 6px;
+}
+
+.analysis-hint.error {
+  color: var(--danger);
+}
+
 /* ROI panel */
 #roi-panel {
   display: flex;
@@ -257,6 +314,7 @@ button:disabled { opacity: 0.38; cursor: not-allowed; }
 #roi-list-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 6px;
 }
@@ -266,6 +324,12 @@ button:disabled { opacity: 0.38; cursor: not-allowed; }
 #roi-list-header button {
   padding: 2px 7px;
   font-size: 10px;
+}
+
+#roi-list-context {
+  color: var(--muted);
+  font-size: 10px;
+  margin-bottom: 6px;
 }
 
 #roi-list {
@@ -349,6 +413,32 @@ input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
   overflow: hidden;
 }
 
+#plot-frequency {
+  height: auto;
+  min-height: 218px;
+  overflow-y: auto;
+}
+
+.raster-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  color: var(--muted);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+
+.raster-controls select {
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
 #plot-summary {
   display: flex;
   flex-direction: row;
@@ -361,9 +451,26 @@ input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
   height: 218px;
 }
 
+.assay-pane {
+  display: flex;
+  flex-direction: row;
+}
+
+#plot-tg-peak,
+#plot-tg-slope,
+#plot-tg-auc,
+#plot-addback-peak,
+#plot-addback-slope,
+#plot-addback-auc,
+#plot-addback-latency {
+  flex: 1;
+  min-width: 0;
+  height: 218px;
+}
+
 /* ── BG drawing mode ─────────────────────────────────────────────────── */
-#roi-canvas.drawing-bg { cursor: crosshair !important; }
-#roi-canvas.drawing-bg-active { cursor: cell !important; }
+.canvas-container canvas.drawing-bg { cursor: crosshair !important; }
+.canvas-container canvas.drawing-bg-active { cursor: cell !important; }
 
 /* ── Scrollbar ───────────────────────────────────────────────────────── */
 ::-webkit-scrollbar       { width: 4px; }
@@ -375,13 +482,17 @@ input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
     flex-direction: column;
   }
 
+  #viewer-grid {
+    grid-template-columns: 1fr;
+  }
+
   #viewer-section,
   #controls-section {
     width: 100%;
     min-width: 0;
   }
 
-  #canvas-container {
+  .canvas-container {
     min-height: 320px;
   }
 }
