@@ -25,6 +25,13 @@ The frontend is served by the FastAPI backend, so you only run one server.
 From the repository root:
 
 ```bash
+bash ./start.sh
+```
+
+If `start.sh` opens in an editor instead of running, it is being opened as a text file by the desktop environment. Run it from a terminal with `bash ./start.sh`, or make it executable with:
+
+```bash
+chmod +x start.sh
 ./start.sh
 ```
 
