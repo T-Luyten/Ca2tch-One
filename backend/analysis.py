@@ -107,10 +107,10 @@ def _exp_decay(t, a, b, c):
 
 
 def _photobleach_correct_trace(trace, time_axis, mode='none'):
-    if mode == 'none':
-        return trace
-
     arr = np.array(trace, dtype=float)
+    if mode == 'none':
+        return arr
+
     t = np.array(time_axis, dtype=float)
     valid = (~np.isnan(arr)) & np.isfinite(arr)
     if valid.sum() < 4:
@@ -118,6 +118,17 @@ def _photobleach_correct_trace(trace, time_axis, mode='none'):
 
     y = arr[valid]
     x = t[valid]
+
+    if mode == 'linear':
+        try:
+            slope, intercept = np.polyfit(x, y, 1)
+            fitted = slope * t + intercept
+            baseline_level = float(fitted[0]) if np.isfinite(fitted[0]) else 0.0
+            corrected = arr - fitted + baseline_level
+            return corrected
+        except Exception:
+            return arr
+
     y_min = float(np.nanmin(y))
     y_max = float(np.nanmax(y))
     amplitude = max(y_max - y_min, 1e-6)
@@ -155,7 +166,7 @@ def extract_traces(data, labels, roi_ids, channel=0,
     bg_mode     : 'none' | 'auto' | 'manual'
     bg_percentile : used when bg_mode in ('auto', 'manual')
     bg_mask     : boolean (Y, X) array, used when bg_mode == 'manual'
-    photobleach_mode : 'none' | 'single_exp'
+    photobleach_mode : 'none' | 'linear' | 'single_exp'
     time_axis   : list/array of frame times used for bleach fitting
 
     Returns
@@ -214,7 +225,7 @@ def extract_ratio_traces(data, labels, roi_ids,
     bg_mode       : 'none' | 'auto' | 'manual'
     bg_percentile : used when bg_mode in ('auto', 'manual')
     bg_mask       : boolean (Y, X) array, used when bg_mode == 'manual'
-    photobleach_mode : 'none' | 'single_exp'
+    photobleach_mode : 'none' | 'linear' | 'single_exp'
     time_axis     : list/array of frame times used for bleach fitting
 
     Returns

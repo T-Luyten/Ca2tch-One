@@ -296,7 +296,7 @@ This can help when the recording has mild drift.
 
 ### `Exponential`
 
-A single exponential decay is fit and divided out before normalization.
+A single exponential decay is fit and subtracted before normalization.
 
 This can help with stronger bleaching, but may distort traces if the fit is poor.
 

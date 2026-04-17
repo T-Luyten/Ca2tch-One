@@ -76,7 +76,7 @@ class AnalyzeParams(BaseModel):
     bg_mode: str = 'auto'                      # 'none' | 'auto' | 'manual'
     bg_percentile: float = 50.0                # background statistic percentile for auto/manual modes (50 = median)
     bg_polygon: Optional[List[List[float]]] = None  # manual mode: [[x,y], ...]
-    photobleach_mode: str = 'none'             # 'none' | 'single_exp'
+    photobleach_mode: str = 'none'             # 'none' | 'linear' | 'single_exp'
     analysis_mode: str = 'single'              # 'single' | 'ratio'
     ratio_ch_num: int = 0                      # Fura-2: numerator channel (e.g. 340 nm)
     ratio_ch_den: int = 1                      # Fura-2: denominator channel (e.g. 380 nm)
