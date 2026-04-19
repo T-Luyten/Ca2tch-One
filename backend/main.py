@@ -45,6 +45,12 @@ from image_io import (
 SESSION_TTL_SECONDS = 2 * 60 * 60   # 2 hours
 SESSION_SWEEP_INTERVAL = 5 * 60     # sweep every 5 minutes
 
+# Maximum process RSS before new uploads are rejected.
+# Override with env var: CACELLFIE_MAX_RSS_MB=2048
+# Set to 0 to disable the limit.
+_max_rss_mb = int(os.environ.get('CACELLFIE_MAX_RSS_MB', '1500'))
+MAX_PROCESS_RSS_BYTES = _max_rss_mb * 1024 * 1024 if _max_rss_mb > 0 else None
+
 
 async def _evict_stale_sessions():
     while True:
@@ -133,6 +139,17 @@ class MergeRoisParams(BaseModel):
 async def upload_file(file: UploadFile = File(...)):
     if not (file.filename or '').lower().endswith('.nd2'):
         raise HTTPException(400, "Only .nd2 files are supported")
+
+    if MAX_PROCESS_RSS_BYTES is not None:
+        rss = psutil.Process().memory_info().rss
+        if rss >= MAX_PROCESS_RSS_BYTES:
+            used_mb = rss // (1024 * 1024)
+            limit_mb = MAX_PROCESS_RSS_BYTES // (1024 * 1024)
+            raise HTTPException(
+                507,
+                f"Server memory full ({used_mb} MB used, limit {limit_mb} MB). "
+                "Close an open session or ask the administrator to raise CACELLFIE_MAX_RSS_MB."
+            )
 
     with tempfile.NamedTemporaryFile(suffix='.nd2', delete=False) as tmp:
         tmp.write(await file.read())
