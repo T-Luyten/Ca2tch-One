@@ -541,11 +541,9 @@ function init() {
     invalidateAnalysis('', { preserveRaw: true });
   });
 
-  D.baselineStart.addEventListener('change', () => {
-    invalidateAnalysis('', { preserveRaw: true });
-  });
-  D.baselineEnd.addEventListener('change', () => {
-    invalidateAnalysis('', { preserveRaw: true });
+  [D.baselineStart, D.baselineEnd].forEach(el => {
+    el.addEventListener('input',  () => updatePlotTimeCursor());
+    el.addEventListener('change', () => { updatePlotTimeCursor(); invalidateAnalysis('', { preserveRaw: true }); });
   });
   [D.tgFrame, D.tgEndFrame, D.tgBaselineFrames, D.tgSlopeFrames, D.addbackFrame, D.addbackEndFrame, D.addbackBaselineFrames, D.addbackSlopeFrames].forEach(el => {
     el.addEventListener('change', () => {
@@ -625,6 +623,9 @@ function init() {
     cleanupFileSession(S.files.source.fileId, { keepalive: true });
     cleanupFileSession(S.files.measure.fileId, { keepalive: true });
   });
+
+  startMemoryPoller();
+  setupDragMouseHandlers();
 }
 
 // ── Upload ────────────────────────────────────────────────────────────────────
@@ -636,6 +637,7 @@ async function uploadFile(role, file) {
   D.detectBtn.disabled = true;
   D.transferBtn.disabled = true;
   D.analyzeBtn.disabled = true;
+  document.getElementById('upload-bar-fill').classList.add('active');
 
   const fd = new FormData();
   fd.append('file', file);
@@ -711,6 +713,8 @@ async function uploadFile(role, file) {
     setStatus('');
   } catch (err) {
     setStatus(`Error: ${err.message}`);
+  } finally {
+    document.getElementById('upload-bar-fill').classList.remove('active');
   }
 }
 
@@ -1694,6 +1698,8 @@ function renderPlots() {
     PLOTLY_CONFIG,
   );
 
+  setupHandleListeners();
+
   // Click on trace -> toggle ROI selection
   [D.plotRaw, D.plotDelta].forEach(el => {
     el.removeAllListeners?.('plotly_click');
@@ -1742,162 +1748,238 @@ function frameRangeBounds(startFrameValue, endFrameValue) {
   return { startTime, endTime };
 }
 
+function markerLine(name, x, color, dash) {
+  return {
+    type: 'line', xref: 'x', yref: 'paper',
+    name, x0: x, x1: x, y0: 0, y1: 1,
+    line: { color, width: 1.8, dash },
+  };
+}
+
+function windowShapes(startTime, endTime, fillColor, lineColor, startName, endName) {
+  return [
+    {
+      type: 'rect', xref: 'x', yref: 'paper',
+      x0: startTime, x1: endTime, y0: 0, y1: 1,
+      fillcolor: fillColor, line: { width: 0 }, layer: 'below',
+    },
+    markerLine(startName, startTime, lineColor, 'dash'),
+    markerLine(endName,   endTime,   lineColor, 'dot'),
+  ];
+}
+
 function updatePlotTimeCursor() {
   const t = currentGraphTime();
   const plots = [D.plotRaw, D.plotDelta];
   const shapes = [];
+
   if (t !== null) {
     shapes.push({
-      type: 'line',
-      xref: 'x',
-      yref: 'paper',
-      x0: t,
-      x1: t,
-      y0: 0,
-      y1: 1,
-      line: {
-        color: '#fbbf24',
-        width: 1.5,
-        dash: 'dot',
-      },
+      type: 'line', xref: 'x', yref: 'paper',
+      x0: t, x1: t, y0: 0, y1: 1,
+      line: { color: '#fbbf24', width: 1.5, dash: 'dot' },
     });
+  }
+
+  const baselineWindow = frameRangeBounds(D.baselineStart?.value, D.baselineEnd?.value);
+  if (baselineWindow) {
+    shapes.push(...windowShapes(
+      baselineWindow.startTime, baselineWindow.endTime,
+      'rgba(16,185,129,0.10)', '#10b981',
+      'baseline-start', 'baseline-end',
+    ));
   }
 
   const aucWindow = frameRangeBounds(D.aucStart?.value, D.aucEnd?.value);
   if (aucWindow) {
-    shapes.push({
-      type: 'rect',
-      xref: 'x',
-      yref: 'paper',
-      x0: aucWindow.startTime,
-      x1: aucWindow.endTime,
-      y0: 0,
-      y1: 1,
-      fillcolor: 'rgba(59,130,246,0.08)',
-      line: { width: 0 },
-      layer: 'below',
-    });
-    shapes.push({
-      type: 'line',
-      xref: 'x',
-      yref: 'paper',
-      x0: aucWindow.startTime,
-      x1: aucWindow.startTime,
-      y0: 0,
-      y1: 1,
-      line: {
-        color: '#60a5fa',
-        width: 1.8,
-        dash: 'dash',
-      },
-    });
-    shapes.push({
-      type: 'line',
-      xref: 'x',
-      yref: 'paper',
-      x0: aucWindow.endTime,
-      x1: aucWindow.endTime,
-      y0: 0,
-      y1: 1,
-      line: {
-        color: '#60a5fa',
-        width: 1.8,
-        dash: 'dot',
-      },
-    });
+    shapes.push(...windowShapes(
+      aucWindow.startTime, aucWindow.endTime,
+      'rgba(59,130,246,0.08)', '#60a5fa',
+      'auc-start', 'auc-end',
+    ));
   }
 
   const tgWindow = frameRangeBounds(D.tgFrame?.value, D.tgEndFrame?.value);
   if (tgWindow) {
-    shapes.push({
-      type: 'rect',
-      xref: 'x',
-      yref: 'paper',
-      x0: tgWindow.startTime,
-      x1: tgWindow.endTime,
-      y0: 0,
-      y1: 1,
-      fillcolor: 'rgba(249,115,22,0.10)',
-      line: { width: 0 },
-      layer: 'below',
-    });
-    shapes.push({
-      type: 'line',
-      xref: 'x',
-      yref: 'paper',
-      x0: tgWindow.startTime,
-      x1: tgWindow.startTime,
-      y0: 0,
-      y1: 1,
-      line: {
-        color: '#f97316',
-        width: 1.8,
-        dash: 'dash',
-      },
-    });
-    shapes.push({
-      type: 'line',
-      xref: 'x',
-      yref: 'paper',
-      x0: tgWindow.endTime,
-      x1: tgWindow.endTime,
-      y0: 0,
-      y1: 1,
-      line: {
-        color: '#f97316',
-        width: 1.8,
-        dash: 'dot',
-      },
-    });
+    shapes.push(...windowShapes(
+      tgWindow.startTime, tgWindow.endTime,
+      'rgba(249,115,22,0.10)', '#f97316',
+      'tg-start', 'tg-end',
+    ));
   }
 
   const addbackWindow = frameRangeBounds(D.addbackFrame?.value, D.addbackEndFrame?.value);
   if (addbackWindow) {
-    shapes.push({
-      type: 'rect',
-      xref: 'x',
-      yref: 'paper',
-      x0: addbackWindow.startTime,
-      x1: addbackWindow.endTime,
-      y0: 0,
-      y1: 1,
-      fillcolor: 'rgba(139,92,246,0.10)',
-      line: { width: 0 },
-      layer: 'below',
-    });
-    shapes.push({
-      type: 'line',
-      xref: 'x',
-      yref: 'paper',
-      x0: addbackWindow.startTime,
-      x1: addbackWindow.startTime,
-      y0: 0,
-      y1: 1,
-      line: {
-        color: '#8b5cf6',
-        width: 1.8,
-        dash: 'dash',
-      },
-    });
-    shapes.push({
-      type: 'line',
-      xref: 'x',
-      yref: 'paper',
-      x0: addbackWindow.endTime,
-      x1: addbackWindow.endTime,
-      y0: 0,
-      y1: 1,
-      line: {
-        color: '#8b5cf6',
-        width: 1.8,
-        dash: 'dot',
-      },
-    });
+    shapes.push(...windowShapes(
+      addbackWindow.startTime, addbackWindow.endTime,
+      'rgba(139,92,246,0.10)', '#8b5cf6',
+      'addback-start', 'addback-end',
+    ));
   }
 
   plots.forEach(plot => {
     if (!plot || !plot.data) return;
     Plotly.relayout(plot, { shapes }).catch?.(() => {});
+  });
+  updateMarkerHandles();
+}
+
+// ── Marker drag handles ───────────────────────────────────────────────────────
+
+const MARKER_DEFS = {
+  'baseline-start': { getInput: () => D.baselineStart,   color: '#10b981', exclusive: false, label: 'Baseline start'     },
+  'baseline-end':   { getInput: () => D.baselineEnd,     color: '#10b981', exclusive: true,  label: 'Baseline end'       },
+  'auc-start':      { getInput: () => D.aucStart,        color: '#60a5fa', exclusive: false, label: 'AUC start'          },
+  'auc-end':        { getInput: () => D.aucEnd,          color: '#60a5fa', exclusive: true,  label: 'AUC end'            },
+  'tg-start':       { getInput: () => D.tgFrame,         color: '#f97316', exclusive: false, label: 'TG start'           },
+  'tg-end':         { getInput: () => D.tgEndFrame,      color: '#f97316', exclusive: true,  label: 'TG end'             },
+  'addback-start':  { getInput: () => D.addbackFrame,    color: '#8b5cf6', exclusive: false, label: 'Ca add-back start'  },
+  'addback-end':    { getInput: () => D.addbackEndFrame, color: '#8b5cf6', exclusive: true,  label: 'Ca add-back end'    },
+};
+
+function timeToFrame(t) {
+  const file = measureFile().metadata ? measureFile() : currentFile();
+  if (!file.metadata || !Array.isArray(file.metadata.time_axis)) return 0;
+  const axis = file.metadata.time_axis;
+  let best = 0, bestDist = Math.abs(axis[0] - t);
+  for (let i = 1; i < axis.length; i++) {
+    const d = Math.abs(axis[i] - t);
+    if (d < bestDist) { bestDist = d; best = i; }
+  }
+  return best;
+}
+
+function timeToPixelX(plot, t) {
+  const fl = plot._fullLayout;
+  if (!fl) return null;
+  const xa = fl.xaxis;
+  const [x0, x1] = xa.range;
+  return xa._offset + ((t - x0) / (x1 - x0)) * xa._length;
+}
+
+function clientXToTime(plot, clientX) {
+  const fl = plot._fullLayout;
+  if (!fl) return null;
+  const xa = fl.xaxis;
+  const [x0, x1] = xa.range;
+  const rect = plot.getBoundingClientRect();
+  return x0 + ((clientX - rect.left - xa._offset) / xa._length) * (x1 - x0);
+}
+
+function getOrCreateHandleLayer(plot) {
+  let layer = plot.querySelector(':scope > .marker-handle-layer');
+  if (!layer) {
+    plot.style.position = 'relative';
+    layer = document.createElement('div');
+    layer.className = 'marker-handle-layer';
+    plot.appendChild(layer);
+  }
+  return layer;
+}
+
+function updateMarkerHandles() {
+  const plots = [D.plotRaw, D.plotDelta];
+
+  const windows = {
+    baseline: frameRangeBounds(D.baselineStart?.value, D.baselineEnd?.value),
+    auc:      frameRangeBounds(D.aucStart?.value,      D.aucEnd?.value),
+    tg:       frameRangeBounds(D.tgFrame?.value,       D.tgEndFrame?.value),
+    addback:  frameRangeBounds(D.addbackFrame?.value,  D.addbackEndFrame?.value),
+  };
+
+  const markerTimes = {};
+  if (windows.baseline) { markerTimes['baseline-start'] = windows.baseline.startTime; markerTimes['baseline-end'] = windows.baseline.endTime; }
+  if (windows.auc)      { markerTimes['auc-start']      = windows.auc.startTime;      markerTimes['auc-end']      = windows.auc.endTime; }
+  if (windows.tg)       { markerTimes['tg-start']       = windows.tg.startTime;       markerTimes['tg-end']       = windows.tg.endTime; }
+  if (windows.addback)  { markerTimes['addback-start']  = windows.addback.startTime;  markerTimes['addback-end']  = windows.addback.endTime; }
+
+  plots.forEach(plot => {
+    if (!plot._fullLayout) return;
+    const fl    = plot._fullLayout;
+    const layer = getOrCreateHandleLayer(plot);
+    const innerL = fl.xaxis._offset;
+    const innerR = fl.xaxis._offset + fl.xaxis._length;
+
+    Object.entries(MARKER_DEFS).forEach(([name, def]) => {
+      let el = layer.querySelector(`[data-marker="${name}"]`);
+      const t = markerTimes[name];
+
+      if (t === undefined) {
+        if (el) el.style.display = 'none';
+        return;
+      }
+
+      const px = timeToPixelX(plot, t);
+      if (px === null || px < innerL - 8 || px > innerR + 8) {
+        if (el) el.style.display = 'none';
+        return;
+      }
+
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'marker-handle';
+        el.dataset.marker = name;
+        el.style.color = def.color;
+        layer.appendChild(el);
+        el.addEventListener('mousedown', onHandleMouseDown);
+      }
+
+      el.dataset.label = def.label;
+      el.style.display = '';
+      el.style.left = px + 'px';
+    });
+  });
+}
+
+let _activeDrag = null;
+
+function onHandleMouseDown(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const layer = e.currentTarget.closest('.marker-handle-layer');
+  _activeDrag = {
+    name: e.currentTarget.dataset.marker,
+    plot: layer?.parentElement,
+    el:   e.currentTarget,
+  };
+  e.currentTarget.classList.add('dragging');
+}
+
+function setupDragMouseHandlers() {
+  document.addEventListener('mousemove', e => {
+    if (!_activeDrag) return;
+    const t = clientXToTime(_activeDrag.plot, e.clientX);
+    if (t === null) return;
+    const def = MARKER_DEFS[_activeDrag.name];
+    if (!def) return;
+    const frame = timeToFrame(t);
+    def.getInput().value = def.exclusive ? frame + 1 : frame;
+    _activeDrag.el.dataset.label = `${def.label} · f${frame} · ${t.toFixed(1)}s`;
+    updatePlotTimeCursor();
+  });
+
+  document.addEventListener('mouseup', e => {
+    if (!_activeDrag) return;
+    const t = clientXToTime(_activeDrag.plot, e.clientX);
+    const def = MARKER_DEFS[_activeDrag.name];
+    if (t !== null && def) {
+      const frame = timeToFrame(t);
+      def.getInput().value = def.exclusive ? frame + 1 : frame;
+      def.getInput().dispatchEvent(new Event('change'));
+    }
+    _activeDrag.el.dataset.label = MARKER_DEFS[_activeDrag.name].label;
+    _activeDrag.el.classList.remove('dragging');
+    _activeDrag = null;
+  });
+}
+
+let _handleListenersReady = false;
+function setupHandleListeners() {
+  if (_handleListenersReady) return;
+  if (!D.plotRaw._fullLayout || !D.plotDelta._fullLayout) return;
+  _handleListenersReady = true;
+  [D.plotRaw, D.plotDelta].forEach(plot => {
+    plot.on('plotly_relayout', updateMarkerHandles);
   });
 }
 
@@ -2505,6 +2587,31 @@ function cleanupFileSession(fileId, opts = {}) {
     method: 'DELETE',
     keepalive: !!opts.keepalive,
   }).catch(() => {});
+}
+
+// ── Memory readout ────────────────────────────────────────────────────────────
+function fmtBytes(b) {
+  if (b >= 1073741824) return (b / 1073741824).toFixed(1) + ' GB';
+  if (b >= 1048576)    return (b / 1048576).toFixed(0)    + ' MB';
+  return                      (b / 1024).toFixed(0)       + ' KB';
+}
+
+async function pollMemory() {
+  try {
+    const r = await fetch(`${API}/api/memory`);
+    if (!r.ok) return;
+    const d = await r.json();
+    const el = document.getElementById('mem-readout');
+    if (el) {
+      el.textContent =
+        `mem: ${fmtBytes(d.process_rss_bytes)} rss · ${fmtBytes(d.session_data_bytes)} nd2 · ${d.session_count} sess`;
+    }
+  } catch {}
+}
+
+function startMemoryPoller() {
+  pollMemory();
+  setInterval(pollMemory, 5000);
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────

@@ -1,14 +1,18 @@
+import asyncio
 import csv
 import io
 import json
 import os
 import tempfile
+import time
 import uuid
 import zipfile
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import List, Optional
 from xml.sax.saxutils import escape
 
+import psutil
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,7 +42,27 @@ from image_io import (
     load_nd2_file,
 )
 
-app = FastAPI(title="Calcium Imaging Analyzer")
+SESSION_TTL_SECONDS = 2 * 60 * 60   # 2 hours
+SESSION_SWEEP_INTERVAL = 5 * 60     # sweep every 5 minutes
+
+
+async def _evict_stale_sessions():
+    while True:
+        await asyncio.sleep(SESSION_SWEEP_INTERVAL)
+        cutoff = time.monotonic() - SESSION_TTL_SECONDS
+        stale = [fid for fid, s in sessions.items() if s['last_accessed'] < cutoff]
+        for fid in stale:
+            sessions.pop(fid, None)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    task = asyncio.create_task(_evict_stale_sessions())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="Ca2+ cell-fie", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -135,6 +159,7 @@ async def upload_file(file: UploadFile = File(...)):
     }
 
     sessions[file_id] = {
+        'last_accessed': time.monotonic(),
         'file_name': file.filename,
         'data': data,
         'metadata': metadata,
@@ -701,6 +726,29 @@ async def export_overlay_image(
     )
 
 
+@app.get("/api/memory")
+async def memory_stats():
+    proc = psutil.Process()
+    rss = proc.memory_info().rss
+
+    session_data_bytes = sum(
+        s['data'].nbytes for s in sessions.values() if s.get('data') is not None
+    )
+    session_other_bytes = sum(
+        (s['labels'].nbytes if s.get('labels') is not None else 0) +
+        sum(v.nbytes for v in (s.get('traces') or {}).values()) +
+        sum(v.nbytes for v in (s.get('delta_f') or {}).values())
+        for s in sessions.values()
+    )
+
+    return {
+        'process_rss_bytes':    rss,
+        'session_count':        len(sessions),
+        'session_data_bytes':   session_data_bytes,
+        'session_other_bytes':  session_other_bytes,
+    }
+
+
 @app.delete("/api/file/{file_id}")
 async def cleanup(file_id: str):
     sessions.pop(file_id, None)
@@ -712,6 +760,7 @@ async def cleanup(file_id: str):
 def _get_session(file_id: str) -> dict:
     if file_id not in sessions:
         raise HTTPException(404, "Session not found — please re-upload the file")
+    sessions[file_id]['last_accessed'] = time.monotonic()
     return sessions[file_id]
 
 

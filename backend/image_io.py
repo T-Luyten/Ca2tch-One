@@ -125,16 +125,16 @@ def get_projection(data, proj_type='mean', channel=0):
 
 
 def get_ratio_frame(data, t=0, ch_num=0, ch_den=1):
-    num = data[t, ch_num, :, :].astype(float)
-    den = data[t, ch_den, :, :].astype(float)
+    num = data[t, ch_num, :, :].astype(np.float32)
+    den = data[t, ch_den, :, :].astype(np.float32)
     with np.errstate(divide='ignore', invalid='ignore'):
         ratio = np.where(den > 0, num / den, np.nan)
     return ratio
 
 
 def get_ratio_projection(data, proj_type='mean', ch_num=0, ch_den=1):
-    num = data[:, ch_num, :, :].astype(float)
-    den = data[:, ch_den, :, :].astype(float)
+    num = data[:, ch_num, :, :].astype(np.float32)
+    den = data[:, ch_den, :, :].astype(np.float32)
     with np.errstate(divide='ignore', invalid='ignore'):
         ratio = np.where(den > 0, num / den, np.nan)
 
@@ -147,8 +147,8 @@ def get_ratio_projection(data, proj_type='mean', ch_num=0, ch_den=1):
 
 
 def compute_percentile_contrast(data, channel=0, p_low=1.0, p_high=99.5):
-    sample = data[:, channel, :, :].ravel()
-    return float(np.percentile(sample, p_low)), float(np.percentile(sample, p_high))
+    lo, hi = np.percentile(data[:, channel, :, :], [p_low, p_high])
+    return float(lo), float(hi)
 
 
 def compute_ratio_percentile_contrast(data, ch_num=0, ch_den=1, p_low=1.0, p_high=99.5):
@@ -156,7 +156,8 @@ def compute_ratio_percentile_contrast(data, ch_num=0, ch_den=1, p_low=1.0, p_hig
     finite = ratio[np.isfinite(ratio)]
     if finite.size == 0:
         return 0.0, 1.0
-    return float(np.percentile(finite, p_low)), float(np.percentile(finite, p_high))
+    lo, hi = np.percentile(finite, [p_low, p_high])
+    return float(lo), float(hi)
 
 
 def frame_to_image(frame_2d, contrast_min=None, contrast_max=None, colormap='green'):

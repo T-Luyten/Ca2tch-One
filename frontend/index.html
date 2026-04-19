@@ -3,19 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Calcium Imaging Analyzer</title>
-  <link rel="stylesheet" href="style.css?v=20260414a">
+  <title>Ca²⁺ cell-fie</title>
+  <link rel="stylesheet" href="style.css?v=20260419e">
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" defer></script>
 </head>
 <body>
+  <div id="upload-bar"><div id="upload-bar-fill"></div></div>
   <div id="header">
-    <h1>Ca²⁺ Imaging Analyzer</h1>
+    <h1>Ca²⁺ cell-fie <span id="app-version">(v1.0.0-alpha)</span></h1>
     <label class="upload-label" for="source-file-input">Load ROI Source</label>
     <input type="file" id="source-file-input" accept=".nd2" hidden>
     <label class="upload-label" for="measure-file-input">Load Measurement</label>
     <input type="file" id="measure-file-input" accept=".nd2" hidden>
     <span id="file-info">ROI source: none | Measurement: none</span>
     <span id="status-bar"></span>
+    <span id="mem-readout" title="process RSS / ND2 data in sessions / sessions open">mem: —</span>
   </div>
 
   <div id="main">
