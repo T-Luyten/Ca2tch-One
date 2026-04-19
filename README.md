@@ -1,5 +1,9 @@
 # Ca2+tch-One
 
+<p align="center">
+  <img src="CatchOne.png" alt="Ca2+tch-One logo" width="240" />
+</p>
+
 Web application for ROI detection, ROI editing, fluorescence trace extraction, calcium-response analysis, assay-specific `thapsigargin / Ca add-back` quantification, and export from `.nd2` files.
 
 The frontend is served directly by the FastAPI backend, so you only need to start one app.
