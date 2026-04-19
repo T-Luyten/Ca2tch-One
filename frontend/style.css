@@ -148,15 +148,18 @@ body {
 }
 
 #mem-bar-wrap {
+  display: inline-block;
   width: 60px;
   height: 6px;
   background: var(--surface2);
   border-radius: 3px;
   overflow: hidden;
   flex-shrink: 0;
+  vertical-align: middle;
 }
 
 #mem-bar-fill {
+  display: block;
   height: 100%;
   width: 0%;
   border-radius: 3px;
