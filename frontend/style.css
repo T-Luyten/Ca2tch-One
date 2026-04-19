@@ -192,7 +192,8 @@ body {
   color: var(--muted);
   font-size: 11px;
   flex: 1;
-  min-width: 260px;
+  min-width: 160px;
+  max-width: 340px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -202,6 +203,10 @@ body {
   font-size: 11px;
   color: var(--accent);
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── Main split ──────────────────────────────────────────────────────── */
