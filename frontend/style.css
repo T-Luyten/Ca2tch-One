@@ -64,6 +64,12 @@ body {
   min-height: 40px;
 }
 
+#logo {
+  height: 50px;
+  width: auto;
+  flex-shrink: 0;
+}
+
 #header h1 {
   font-size: 14px;
   font-weight: 700;
