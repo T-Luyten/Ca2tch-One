@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Ca²⁺ cell-fie</title>
-  <link rel="stylesheet" href="style.css?v=20260419e">
+  <link rel="stylesheet" href="style.css?v=20260419f">
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" defer></script>
 </head>
 <body>
@@ -17,7 +17,10 @@
     <input type="file" id="measure-file-input" accept=".nd2" hidden>
     <span id="file-info">ROI source: none | Measurement: none</span>
     <span id="status-bar"></span>
-    <span id="mem-readout" title="process RSS / ND2 data in sessions / sessions open">mem: —</span>
+    <span id="mem-readout" title="process RSS / ND2 data in sessions / sessions open">
+      <span id="mem-bar-wrap"><span id="mem-bar-fill"></span></span>
+      <span id="mem-text">mem: —</span>
+    </span>
   </div>
 
   <div id="main">

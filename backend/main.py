@@ -760,6 +760,7 @@ async def memory_stats():
 
     return {
         'process_rss_bytes':    rss,
+        'max_rss_bytes':        MAX_PROCESS_RSS_BYTES,
         'session_count':        len(sessions),
         'session_data_bytes':   session_data_bytes,
         'session_other_bytes':  session_other_bytes,

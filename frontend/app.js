@@ -2601,10 +2601,29 @@ async function pollMemory() {
     const r = await fetch(`${API}/api/memory`);
     if (!r.ok) return;
     const d = await r.json();
-    const el = document.getElementById('mem-readout');
-    if (el) {
-      el.textContent =
+
+    const textEl = document.getElementById('mem-text');
+    const barFill = document.getElementById('mem-bar-fill');
+    const barWrap = document.getElementById('mem-bar-wrap');
+
+    if (textEl) {
+      textEl.textContent =
         `mem: ${fmtBytes(d.process_rss_bytes)} rss · ${fmtBytes(d.session_data_bytes)} nd2 · ${d.session_count} sess`;
+    }
+
+    if (barFill && barWrap) {
+      if (d.max_rss_bytes) {
+        const pct = Math.min(100, (d.process_rss_bytes / d.max_rss_bytes) * 100);
+        barFill.style.width = pct + '%';
+        barFill.style.background =
+          pct >= 90 ? '#ef4444' :
+          pct >= 70 ? '#f97316' :
+                      '#10b981';
+        barWrap.title = `${fmtBytes(d.process_rss_bytes)} / ${fmtBytes(d.max_rss_bytes)} limit`;
+        barWrap.style.display = '';
+      } else {
+        barWrap.style.display = 'none';
+      }
     }
   } catch {}
 }
