@@ -27,7 +27,7 @@ pip install -q --upgrade pip
 pip install -q -r requirements.txt
 
 echo ""
-echo "  Starting Calcium Imaging Analyzer"
+echo "  Starting Flux Ca2+pacitor"
 echo "  Open http://localhost:8001 in your browser"
 echo ""
 

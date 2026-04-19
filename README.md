@@ -1,4 +1,4 @@
-# Calcium Imaging Analyzer
+# Ca2+tch-One
 
 Web application for ROI detection, fluorescence trace extraction, calcium-response analysis, and assay-specific `thapsigargin / Ca add-back` analysis from `.nd2` files.
 

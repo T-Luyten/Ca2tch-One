@@ -36,7 +36,7 @@ python -m pip install -q -r requirements.txt
 if errorlevel 1 exit /b 1
 
 echo.
-echo   Starting Calcium Imaging Analyzer
+echo   Starting Flux Ca2+pacitor
 echo   Opening %APP_URL% in your browser...
 echo.
 

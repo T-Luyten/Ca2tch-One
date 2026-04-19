@@ -26,6 +26,71 @@ body {
   flex-direction: column;
 }
 
+#splash-screen {
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(135deg, #111827 0%, #1f2937 50%, #0f172a 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  z-index: 9999;
+  pointer-events: none;
+}
+
+#splash-screen.hidden {
+  display: none !important;
+}
+
+#splash-logo {
+  height: 200px;
+  width: auto;
+  filter: drop-shadow(0 8px 16px rgba(16, 185, 129, 0.2));
+  animation: splash-pulse 2s ease-in-out infinite;
+}
+
+#splash-screen::before {
+  content: 'Ca2+tch-One';
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.02em;
+  text-align: center;
+  animation: splash-fade-in 0.8s ease-in-out 0.3s both;
+}
+
+@keyframes splash-pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes splash-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes splash-fade-out {
+  from {
+    opacity: 1;
+    visibility: visible;
+  }
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
 /* ── Header ─────────────────────────────────────────────────────────── */
 #upload-bar {
   height: 3px;

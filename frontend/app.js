@@ -1,5 +1,16 @@
 'use strict';
 
+// Hide splash screen after animation completes
+document.addEventListener('DOMContentLoaded', () => {
+  const splashScreen = document.getElementById('splash-screen');
+  setTimeout(() => {
+    splashScreen.style.animation = 'splash-fade-out 0.6s ease-out forwards';
+    setTimeout(() => {
+      splashScreen.classList.add('hidden');
+    }, 600);
+  }, 2000);
+});
+
 // ── Config ────────────────────────────────────────────────────────────────────
 const API = '';   // same origin (FastAPI serves the frontend)
 
