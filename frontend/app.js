@@ -14,106 +14,6 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── Config ────────────────────────────────────────────────────────────────────
 const API = '';   // same origin (FastAPI serves the frontend)
 
-// ── Authentication ──────────────────────────────────────────────────────────
-function getToken() {
-  return localStorage.getItem('ca2_token');
-}
-
-function saveToken(token) {
-  localStorage.setItem('ca2_token', token);
-}
-
-function clearToken() {
-  localStorage.removeItem('ca2_token');
-}
-
-function decodeToken(token) {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const payload = JSON.parse(atob(parts[1]));
-    return payload;
-  } catch {
-    return null;
-  }
-}
-
-function isTokenValid(token) {
-  const payload = decodeToken(token);
-  if (!payload || !payload.exp) return false;
-  return payload.exp * 1000 > Date.now();
-}
-
-function hasValidToken() {
-  const token = getToken();
-  return token && isTokenValid(token);
-}
-
-async function attemptLogin(username, password) {
-  const formData = new FormData();
-  formData.append('username', username);
-  formData.append('password', password);
-
-  const res = await fetch(API + '/api/token', {
-    method: 'POST',
-    body: formData,
-  });
-
-  if (!res.ok) {
-    const data = await res.json();
-    throw new Error(data.detail || 'Login failed');
-  }
-
-  const data = await res.json();
-  saveToken(data.access_token);
-  return data.access_token;
-}
-
-function showLoginOverlay() {
-  const overlay = document.getElementById('login-overlay');
-  overlay.classList.remove('hidden');
-}
-
-function hideLoginOverlay() {
-  const overlay = document.getElementById('login-overlay');
-  overlay.classList.add('hidden');
-}
-
-async function autoLogin() {
-  try {
-    await attemptLogin('admin', 'changeme');
-    init();
-  } catch (err) {
-    // If auto-login fails, show login form
-    showLoginOverlay();
-    setupLoginForm();
-  }
-}
-
-function setupLoginForm() {
-  const form = document.getElementById('login-form');
-  const errorEl = document.getElementById('login-error');
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const username = document.getElementById('login-username').value;
-    const password = document.getElementById('login-password').value;
-
-    errorEl.textContent = '';
-    form.querySelector('button').disabled = true;
-
-    try {
-      await attemptLogin(username, password);
-      // Re-initialize the app with authentication
-      init();
-    } catch (err) {
-      errorEl.textContent = err.message;
-    } finally {
-      form.querySelector('button').disabled = false;
-    }
-  });
-}
-
 const ROI_COLORS = [
   '#f87171','#fb923c','#facc15','#4ade80','#34d399',
   '#22d3ee','#60a5fa','#a78bfa','#f472b6','#94a3b8',
@@ -499,13 +399,6 @@ function invalidateAnalysis(message = '', { preserveRaw = false } = {}) {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 function init() {
-  // Check authentication
-  if (!hasValidToken()) {
-    autoLogin();
-    return;
-  }
-  hideLoginOverlay();
-
   // Read initial mode values from the DOM so that HTML defaults are respected.
   // State must match what the dropdowns actually show before any user interaction.
   S.colormap.source = D.sourceColormapSel.value;
@@ -513,7 +406,6 @@ function init() {
   S.analysisMode = D.analysisModeEl.value;
   D.ratioOpts.style.display = S.analysisMode === 'ratio' ? 'block' : 'none';
   S.photobleachMode = D.photobleachMode.value;
-
   S.bgMode = D.bgMode.value;
   D.bgAutoOpts.style.display   = S.bgMode === 'auto'   ? 'block' : 'none';
   D.bgManualOpts.style.display = S.bgMode === 'manual' ? 'block' : 'none';
@@ -604,7 +496,6 @@ function init() {
   D.seedSigma.addEventListener('input', () => {
     D.seedSigmaVal.textContent = (+D.seedSigma.value).toFixed(1);
   });
-
   D.detectBtn.addEventListener('click', runDetection);
   D.transferBtn.addEventListener('click', transferROIsToMeasurement);
   D.analyzeBtn.addEventListener('click', runAnalysis);
@@ -976,14 +867,12 @@ async function _loadFrame(role) {
   const viewer = D.viewers[role];
   if (!file.fileId) return;
   const display = getDisplayParams(file);
-  const token = getToken();
   const url = `${API}/api/frame/${file.fileId}` +
     `?t=${file.frame}` +
     (display.mode === 'ratio'
       ? `&mode=ratio&ratio_ch_num=${display.ratioChNum}&ratio_ch_den=${display.ratioChDen}`
       : `&channel=${display.channel}`) +
-    `&cmin=${file.cmin}&cmax=${file.cmax}&colormap=${S.colormap[role]}` +
-    (token ? `&token=${encodeURIComponent(token)}` : '');
+    `&cmin=${file.cmin}&cmax=${file.cmax}&colormap=${S.colormap[role]}`;
 
   const img = new Image();
   img.onload = () => {
@@ -1851,15 +1740,6 @@ function currentGraphTime() {
   return file.metadata.time_axis[frame];
 }
 
-function analysisMarkerTime(frameValue) {
-  const file = measureFile().metadata ? measureFile() : currentFile();
-  if (!file.metadata || !Array.isArray(file.metadata.time_axis) || file.metadata.time_axis.length === 0) {
-    return null;
-  }
-  const frame = Math.max(0, Math.min(+frameValue || 0, file.metadata.time_axis.length - 1));
-  return file.metadata.time_axis[frame];
-}
-
 function frameRangeBounds(startFrameValue, endFrameValue) {
   const file = measureFile().metadata ? measureFile() : currentFile();
   if (!file.metadata || !Array.isArray(file.metadata.time_axis) || file.metadata.time_axis.length === 0) {
@@ -2651,17 +2531,10 @@ function renderAddbackMetrics() {
 }
 
 // ── Export ────────────────────────────────────────────────────────────────────
-function addTokenToUrl(url) {
-  const token = getToken();
-  if (!token) return url;
-  const separator = url.includes('?') ? '&' : '?';
-  return url + separator + 'token=' + encodeURIComponent(token);
-}
-
 function exportCSV(type) {
   if (!measureFile().fileId) return;
   const a = document.createElement('a');
-  a.href     = addTokenToUrl(`${API}/api/export/${measureFile().fileId}?type=${type}`);
+  a.href     = `${API}/api/export/${measureFile().fileId}?type=${type}`;
   a.download = `calcium_${type}.csv`;
   a.click();
 }
@@ -2669,7 +2542,7 @@ function exportCSV(type) {
 function exportWorkbook() {
   if (!measureFile().fileId) return;
   const a = document.createElement('a');
-  a.href = addTokenToUrl(`${API}/api/export-workbook/${measureFile().fileId}`);
+  a.href = `${API}/api/export-workbook/${measureFile().fileId}`;
   a.download = 'calcium_analysis.xlsx';
   a.click();
 }
@@ -2693,7 +2566,7 @@ function exportOverlayImage() {
     params.set('channel', String(display.channel));
   }
   const a = document.createElement('a');
-  a.href = addTokenToUrl(`${API}/api/export-overlay/${file.fileId}?${params.toString()}`);
+  a.href = `${API}/api/export-overlay/${file.fileId}?${params.toString()}`;
   a.download = 'calcium_roi_overlay.png';
   a.click();
 }
@@ -2717,7 +2590,7 @@ function exportProjectionOverlayImage() {
     params.set('channel', String(display.channel));
   }
   const a = document.createElement('a');
-  a.href = addTokenToUrl(`${API}/api/export-overlay/${file.fileId}?${params.toString()}`);
+  a.href = `${API}/api/export-overlay/${file.fileId}?${params.toString()}`;
   a.download = 'calcium_projection_roi_overlay.png';
   a.click();
 }
@@ -2762,13 +2635,9 @@ function syncAnalysisUI() {
 function cleanupFileSession(fileId, opts = {}) {
   if (!fileId) return;
 
-  const token = getToken();
-  const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-
   fetch(`${API}/api/file/${fileId}`, {
     method: 'DELETE',
     keepalive: !!opts.keepalive,
-    headers,
   }).catch(() => {});
 }
 
@@ -2781,9 +2650,7 @@ function fmtBytes(b) {
 
 async function pollMemory() {
   try {
-    const token = getToken();
-    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-    const r = await fetch(`${API}/api/memory`, { headers });
+    const r = await fetch(`${API}/api/memory`);
     if (!r.ok) return;
     const d = await r.json();
 
@@ -2820,11 +2687,6 @@ function startMemoryPoller() {
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 async function apiFetch(path, opts = {}) {
-  const token = getToken();
-  if (token) {
-    if (!opts.headers) opts.headers = {};
-    opts.headers['Authorization'] = `Bearer ${token}`;
-  }
   const res = await fetch(API + path, opts);
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
