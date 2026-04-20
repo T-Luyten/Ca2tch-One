@@ -400,14 +400,9 @@ def compute_summary_metrics(
     rise_rates = {}
     event_times = {}
 
-    if not auc_end or int(auc_end) <= 0:
-        start = 0
-        end = 0
-        x = t[0:0]
-    else:
-        end = min(int(auc_end), len(t))
-        start = min(max(0, int(auc_start)), max(end - 1, 0))
-        x = t[start:end]
+    end = len(t) if not auc_end or int(auc_end) <= 0 else min(int(auc_end), len(t))
+    start = min(max(0, int(auc_start)), max(end - 1, 0))
+    x = t[start:end]
 
     for roi_id, trace in traces.items():
         arr = np.array(trace, dtype=float)
