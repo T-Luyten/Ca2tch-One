@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import csv
 import io
 import json
@@ -12,8 +11,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import List, Optional
 from xml.sax.saxutils import escape
-
-from cryptography.fernet import Fernet
 
 import psutil
 import numpy as np
@@ -64,23 +61,6 @@ MAX_PROCESS_RSS_BYTES = _max_rss_mb * 1024 * 1024 if _max_rss_mb > 0 else None
 
 # Maximum file upload size (700 MB)
 MAX_FILE_SIZE_BYTES = 700 * 1024 * 1024
-
-# Generate encryption key for session data
-_cipher_key = os.environ.get('CIPHER_KEY')
-if _cipher_key:
-    cipher = Fernet(_cipher_key.encode())
-else:
-    cipher = Fernet(Fernet.generate_key())
-
-
-def encrypt_data(data: bytes) -> bytes:
-    """Encrypt bytes data using Fernet symmetric encryption."""
-    return cipher.encrypt(data)
-
-
-def decrypt_data(encrypted_data: bytes) -> bytes:
-    """Decrypt bytes data using Fernet symmetric encryption."""
-    return cipher.decrypt(encrypted_data)
 
 
 async def _evict_stale_sessions():
@@ -351,8 +331,6 @@ async def upload_file(request: Request, file: UploadFile = File(...), _: str = D
         )
     }
 
-    encrypted_file_data = encrypt_data(file_content)
-
     sessions[file_id] = {
         'last_accessed': time.monotonic(),
         'file_name': file.filename,
@@ -381,7 +359,6 @@ async def upload_file(request: Request, file: UploadFile = File(...), _: str = D
         'addback_aucs': None,
         'addback_latencies': None,
         'contrast': contrast,
-        'encrypted_file_data': encrypted_file_data,
     }
 
     return {
