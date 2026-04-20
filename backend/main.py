@@ -306,7 +306,7 @@ async def upload_file(file: UploadFile = File(...), _: str = Depends(get_current
     try:
         data, metadata = load_nd2_file(tmp_path)
     except Exception as exc:
-        raise HTTPException(500, f"Failed to read ND2 file: {exc}") from exc
+        raise HTTPException(500, "Failed to read file. Please ensure the file is a valid ND2 format.") from exc
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
@@ -518,7 +518,7 @@ async def detect(file_id: str, params: DetectParams, _: str = Depends(get_curren
             exclude_mask=exclude,
         )
     except Exception as exc:
-        raise HTTPException(500, f"Detection failed: {exc}") from exc
+        raise HTTPException(500, "Detection failed. Please try with different parameters.") from exc
 
     sess['labels'] = labels
     sess['traces'] = None
@@ -758,7 +758,7 @@ async def analyze(file_id: str, params: AnalyzeParams, _: str = Depends(get_curr
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(500, f"Analysis failed: {exc}") from exc
+        raise HTTPException(500, "Analysis failed. Please try with different parameters.") from exc
 
     sess['traces'] = traces
     sess['delta_f'] = delta_f
