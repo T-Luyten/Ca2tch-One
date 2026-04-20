@@ -274,7 +274,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
 
 
 @app.post("/api/upload")
-@limiter.limit("10/hour")
+@limiter.limit("50/hour")
 async def upload_file(request: Request, file: UploadFile = File(...), _: str = Depends(get_current_user)):
     if not (file.filename or '').lower().endswith('.nd2'):
         raise HTTPException(400, "Only .nd2 files are supported")
@@ -498,7 +498,7 @@ async def get_contrast(
 
 
 @app.post("/api/detect/{file_id}")
-@limiter.limit("30/hour")
+@limiter.limit("100/hour")
 async def detect(request: Request, file_id: str, params: DetectParams, _: str = Depends(get_current_user)):
     sess = _get_session(file_id)
     data = sess['data']
@@ -688,7 +688,7 @@ async def transfer_rois(params: TransferRoisParams, _: str = Depends(get_current
 
 
 @app.post("/api/analyze/{file_id}")
-@limiter.limit("30/hour")
+@limiter.limit("200/hour")
 async def analyze(request: Request, file_id: str, params: AnalyzeParams, _: str = Depends(get_current_user)):
     sess = _get_session(file_id)
     if sess['labels'] is None:
