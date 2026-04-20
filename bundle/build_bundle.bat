@@ -8,7 +8,7 @@ set "PYTHON_URL=https://www.python.org/ftp/python/%PYTHON_VERSION%/%PYTHON_ZIP%"
 set "PYTHON_DIR=%BUNDLE_DIR%python"
 set "PIP_URL=https://bootstrap.pypa.io/get-pip.py"
 
-echo === Flux Ca2+pacitor Bundle Builder ===
+echo === Ca2+tch-One Bundle Builder ===
 echo.
 
 if not exist "%PYTHON_DIR%" (

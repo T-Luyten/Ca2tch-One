@@ -16,7 +16,7 @@ if not exist "%PYTHON%" (
 cd /d "%BUNDLE_DIR%backend"
 
 echo.
-echo   Starting Flux Ca2+pacitor
+echo   Starting Ca2+tch-One
 echo   Opening %APP_URL% in your browser...
 echo.
 
