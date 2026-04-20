@@ -56,6 +56,9 @@ SESSION_SWEEP_INTERVAL = 5 * 60     # sweep every 5 minutes
 _max_rss_mb = int(os.environ.get('CACELLFIE_MAX_RSS_MB', '1500'))
 MAX_PROCESS_RSS_BYTES = _max_rss_mb * 1024 * 1024 if _max_rss_mb > 0 else None
 
+# Maximum file upload size (500 MB)
+MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024
+
 
 async def _evict_stale_sessions():
     while True:
@@ -268,6 +271,14 @@ async def upload_file(file: UploadFile = File(...), _: str = Depends(get_current
     if not (file.filename or '').lower().endswith('.nd2'):
         raise HTTPException(400, "Only .nd2 files are supported")
 
+    if file.size is not None and file.size > MAX_FILE_SIZE_BYTES:
+        size_mb = file.size // (1024 * 1024)
+        limit_mb = MAX_FILE_SIZE_BYTES // (1024 * 1024)
+        raise HTTPException(
+            413,
+            f"File too large ({size_mb} MB). Maximum allowed size is {limit_mb} MB."
+        )
+
     if MAX_PROCESS_RSS_BYTES is not None:
         rss = psutil.Process().memory_info().rss
         if rss >= MAX_PROCESS_RSS_BYTES:
@@ -279,8 +290,17 @@ async def upload_file(file: UploadFile = File(...), _: str = Depends(get_current
                 "Close an open session or ask the administrator to raise CACELLFIE_MAX_RSS_MB."
             )
 
+    file_content = await file.read()
+    if len(file_content) > MAX_FILE_SIZE_BYTES:
+        size_mb = len(file_content) // (1024 * 1024)
+        limit_mb = MAX_FILE_SIZE_BYTES // (1024 * 1024)
+        raise HTTPException(
+            413,
+            f"File too large ({size_mb} MB). Maximum allowed size is {limit_mb} MB."
+        )
+
     with tempfile.NamedTemporaryFile(suffix='.nd2', delete=False) as tmp:
-        tmp.write(await file.read())
+        tmp.write(file_content)
         tmp_path = tmp.name
 
     try:
