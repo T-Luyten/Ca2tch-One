@@ -14,13 +14,17 @@ from xml.sax.saxutils import escape
 
 import psutil
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from datetime import timedelta
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
+from fastapi.security import OAuth2PasswordRequestForm
 from PIL import ImageDraw
 from pydantic import BaseModel
 from skimage import measure
+
+from auth import get_current_user, create_access_token, AUTH_USERNAME, AUTH_PASSWORD_HASH, pwd_context, AUTH_TOKEN_EXPIRE_HOURS
 
 from analysis import (
     compute_addback_metrics,
@@ -135,8 +139,19 @@ class MergeRoisParams(BaseModel):
 
 # ── API routes ────────────────────────────────────────────────────────────────
 
+@app.post("/api/token")
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    """Login endpoint: returns JWT token for authenticated user."""
+    if form_data.username != AUTH_USERNAME or not pwd_context.verify(form_data.password, AUTH_PASSWORD_HASH):
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
+
+    access_token_expires = timedelta(hours=AUTH_TOKEN_EXPIRE_HOURS)
+    access_token = create_access_token(data={"sub": AUTH_USERNAME}, expires_delta=access_token_expires)
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), _: str = Depends(get_current_user)):
     if not (file.filename or '').lower().endswith('.nd2'):
         raise HTTPException(400, "Only .nd2 files are supported")
 
@@ -223,6 +238,7 @@ async def get_frame(
     cmin: Optional[float] = None,
     cmax: Optional[float] = None,
     colormap: str = Query('green'),
+    _: str = Depends(get_current_user),
 ):
     sess = _get_session(file_id)
     data = sess['data']
@@ -266,6 +282,7 @@ async def get_projection_image(
     cmin: Optional[float] = None,
     cmax: Optional[float] = None,
     colormap: str = Query('green'),
+    _: str = Depends(get_current_user),
 ):
     sess = _get_session(file_id)
     meta = sess['metadata']
@@ -301,6 +318,7 @@ async def get_contrast(
     ratio_ch_den: int = Query(1),
     p_low: float = Query(1.0),
     p_high: float = Query(99.5),
+    _: str = Depends(get_current_user),
 ):
     sess = _get_session(file_id)
     meta = sess['metadata']
@@ -324,7 +342,7 @@ async def get_contrast(
 
 
 @app.post("/api/detect/{file_id}")
-async def detect(file_id: str, params: DetectParams):
+async def detect(file_id: str, params: DetectParams, _: str = Depends(get_current_user)):
     sess = _get_session(file_id)
     data = sess['data']
 
@@ -366,7 +384,7 @@ async def detect(file_id: str, params: DetectParams):
 
 
 @app.delete("/api/roi/{file_id}/{roi_id}")
-async def delete_roi(file_id: str, roi_id: int):
+async def delete_roi(file_id: str, roi_id: int, _: str = Depends(get_current_user)):
     sess = _get_session(file_id)
     if sess['labels'] is None:
         raise HTTPException(400, "No ROIs detected yet")
@@ -378,7 +396,7 @@ async def delete_roi(file_id: str, roi_id: int):
 
 
 @app.post("/api/roi/{file_id}")
-async def add_manual_roi(file_id: str, params: ManualRoiParams):
+async def add_manual_roi(file_id: str, params: ManualRoiParams, _: str = Depends(get_current_user)):
     sess = _get_session(file_id)
     h = sess['metadata']['height']
     w = sess['metadata']['width']
@@ -417,7 +435,7 @@ async def add_manual_roi(file_id: str, params: ManualRoiParams):
 
 
 @app.post("/api/roi/{file_id}/merge")
-async def merge_rois(file_id: str, params: MergeRoisParams):
+async def merge_rois(file_id: str, params: MergeRoisParams, _: str = Depends(get_current_user)):
     sess = _get_session(file_id)
     if sess['labels'] is None or not sess['rois']:
         raise HTTPException(400, "No ROIs detected yet")
@@ -455,7 +473,7 @@ async def merge_rois(file_id: str, params: MergeRoisParams):
 
 
 @app.post("/api/transfer-rois")
-async def transfer_rois(params: TransferRoisParams):
+async def transfer_rois(params: TransferRoisParams, _: str = Depends(get_current_user)):
     source = _get_session(params.source_file_id)
     target = _get_session(params.target_file_id)
 
@@ -506,7 +524,7 @@ async def transfer_rois(params: TransferRoisParams):
 
 
 @app.post("/api/analyze/{file_id}")
-async def analyze(file_id: str, params: AnalyzeParams):
+async def analyze(file_id: str, params: AnalyzeParams, _: str = Depends(get_current_user)):
     sess = _get_session(file_id)
     if sess['labels'] is None:
         raise HTTPException(400, "Run detection first")
@@ -634,7 +652,7 @@ async def analyze(file_id: str, params: AnalyzeParams):
 
 
 @app.get("/api/export/{file_id}")
-async def export_csv(file_id: str, type: str = Query('raw')):
+async def export_csv(file_id: str, type: str = Query('raw'), _: str = Depends(get_current_user)):
     sess = _get_session(file_id)
     data_map = sess['traces'] if type == 'raw' else sess['delta_f']
     if data_map is None:
@@ -658,7 +676,7 @@ async def export_csv(file_id: str, type: str = Query('raw')):
 
 
 @app.get("/api/export-workbook/{file_id}")
-async def export_workbook(file_id: str):
+async def export_workbook(file_id: str, _: str = Depends(get_current_user)):
     sess = _get_session(file_id)
     if sess['traces'] is None or sess['delta_f'] is None:
         raise HTTPException(400, "Run analysis first")
@@ -686,6 +704,7 @@ async def export_overlay_image(
     cmin: Optional[float] = None,
     cmax: Optional[float] = None,
     colormap: str = Query('green'),
+    _: str = Depends(get_current_user),
 ):
     sess = _get_session(file_id)
     if not sess['rois']:
@@ -744,7 +763,7 @@ async def export_overlay_image(
 
 
 @app.get("/api/memory")
-async def memory_stats():
+async def memory_stats(_: str = Depends(get_current_user)):
     proc = psutil.Process()
     rss = proc.memory_info().rss
 
@@ -768,7 +787,7 @@ async def memory_stats():
 
 
 @app.delete("/api/file/{file_id}")
-async def cleanup(file_id: str):
+async def cleanup(file_id: str, _: str = Depends(get_current_user)):
     sessions.pop(file_id, None)
     return {'status': 'ok'}
 
