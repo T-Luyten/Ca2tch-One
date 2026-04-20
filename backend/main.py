@@ -753,8 +753,8 @@ async def memory_stats():
     )
     session_other_bytes = sum(
         (s['labels'].nbytes if s.get('labels') is not None else 0) +
-        sum(v.nbytes for v in (s.get('traces') or {}).values()) +
-        sum(v.nbytes for v in (s.get('delta_f') or {}).values())
+        sum(v.nbytes for v in (s.get('traces') or {}).values() if hasattr(v, 'nbytes')) +
+        sum(v.nbytes for v in (s.get('delta_f') or {}).values() if hasattr(v, 'nbytes'))
         for s in sessions.values()
     )
 
