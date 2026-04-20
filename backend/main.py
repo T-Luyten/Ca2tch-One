@@ -3,6 +3,7 @@ import csv
 import io
 import json
 import os
+import sys
 import tempfile
 import time
 import uuid
@@ -937,6 +938,17 @@ async def export_overlay_image(
     )
 
 
+def _get_object_size(obj) -> int:
+    """Get size in bytes of an object (NumPy array or Python list)."""
+    if obj is None:
+        return 0
+    if hasattr(obj, 'nbytes'):
+        return int(obj.nbytes)
+    if isinstance(obj, list):
+        return sum(sys.getsizeof(item) for item in obj)
+    return 0
+
+
 @app.get("/api/memory")
 async def memory_stats(_: str = Depends(get_current_user)):
     proc = psutil.Process()
@@ -946,9 +958,9 @@ async def memory_stats(_: str = Depends(get_current_user)):
         s['data'].nbytes for s in sessions.values() if s.get('data') is not None
     )
     session_other_bytes = sum(
-        (s['labels'].nbytes if s.get('labels') is not None else 0) +
-        sum(v.nbytes for v in (s.get('traces') or {}).values() if hasattr(v, 'nbytes')) +
-        sum(v.nbytes for v in (s.get('delta_f') or {}).values() if hasattr(v, 'nbytes'))
+        _get_object_size(s.get('labels')) +
+        sum(_get_object_size(v) for v in (s.get('traces') or {}).values()) +
+        sum(_get_object_size(v) for v in (s.get('delta_f') or {}).values())
         for s in sessions.values()
     )
 
