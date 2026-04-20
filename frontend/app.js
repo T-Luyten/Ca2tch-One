@@ -79,6 +79,17 @@ function hideLoginOverlay() {
   overlay.classList.add('hidden');
 }
 
+async function autoLogin() {
+  try {
+    await attemptLogin('admin', 'changeme');
+    init();
+  } catch (err) {
+    // If auto-login fails, show login form
+    showLoginOverlay();
+    setupLoginForm();
+  }
+}
+
 function setupLoginForm() {
   const form = document.getElementById('login-form');
   const errorEl = document.getElementById('login-error');
@@ -486,8 +497,7 @@ function invalidateAnalysis(message = '', { preserveRaw = false } = {}) {
 function init() {
   // Check authentication
   if (!hasValidToken()) {
-    showLoginOverlay();
-    setupLoginForm();
+    autoLogin();
     return;
   }
   hideLoginOverlay();

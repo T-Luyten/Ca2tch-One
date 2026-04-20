@@ -1,6 +1,10 @@
 import os
+import warnings
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+# Suppress passlib/bcrypt version warning
+warnings.filterwarnings("ignore", message=".*bcrypt.*version.*")
 
 from fastapi import Depends, HTTPException, Query, status, Header
 from jose import JWTError, jwt
@@ -13,7 +17,7 @@ AUTH_SECRET_KEY = os.environ.get("AUTH_SECRET_KEY", "change-me-in-production")
 AUTH_TOKEN_EXPIRE_HOURS = int(os.environ.get("AUTH_TOKEN_EXPIRE_HOURS", "8"))
 ALGORITHM = "HS256"
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 # On startup, if no password hash is set, use a default and warn
 if not AUTH_PASSWORD_HASH:
