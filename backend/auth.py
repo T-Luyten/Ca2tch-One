@@ -2,8 +2,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Query, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Depends, HTTPException, Query, status, Header
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
@@ -24,10 +23,6 @@ if not AUTH_PASSWORD_HASH:
     print("Set AUTH_PASSWORD_HASH or AUTH_PASSWORD env var in production!")
     print("=" * 70 + "\n")
 
-# Bearer token security scheme (for Authorization header)
-security = HTTPBearer()
-
-
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -43,8 +38,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 
 def get_current_user(
-    bearer: Optional[HTTPAuthorizationCredentials] = Depends(security),
-    token_query: Optional[str] = Query(None, alias="token"),
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
 ) -> str:
     """
     Validate JWT token from either:
@@ -53,12 +48,15 @@ def get_current_user(
 
     Returns the username on success, raises HTTPException on failure.
     """
-    token = None
-    if bearer:
-        token = bearer.credentials
-    elif token_query:
-        token = token_query
-    else:
+    token_value = None
+
+    if authorization:
+        if authorization.startswith("Bearer "):
+            token_value = authorization[7:]
+    elif token:
+        token_value = token
+
+    if not token_value:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
@@ -66,7 +64,7 @@ def get_current_user(
         )
 
     try:
-        payload = jwt.decode(token, AUTH_SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token_value, AUTH_SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         if username is None:
             raise HTTPException(
