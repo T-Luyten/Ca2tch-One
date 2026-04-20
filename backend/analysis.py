@@ -395,7 +395,8 @@ def compute_summary_metrics(
     aucs = {}
     durations = {}
     frequencies = {}
-    latencies = {}
+    rise_times = {}
+    time_to_peaks = {}
     decays = {}
     rise_rates = {}
     event_times = {}
@@ -434,19 +435,21 @@ def compute_summary_metrics(
         baseline_level = float(np.nanmean(baseline)) if baseline.size else 0.0
 
         event_widths = []
-        event_latencies = []
+        event_rise_times = []
+        event_time_to_peaks = []
         event_decays = []
         valid_event_count = 0
         roi_event_times = []
         if x.size:
             for idx in peak_indices:
                 idx = int(idx)
+                event_time_to_peaks.append(float(x[idx]) - float(x[0]))
                 onset_time = _event_onset_time(window, x, idx, baseline_level=baseline_level)
                 width = _event_fwhm(window, x, idx)
                 decay = _event_decay_half_time(window, x, idx)
                 if not (np.isfinite(onset_time) and np.isfinite(width) and np.isfinite(decay)):
                     continue
-                event_latencies.append(float(x[idx]) - onset_time)
+                event_rise_times.append(float(x[idx]) - onset_time)
                 event_widths.append(width)
                 event_decays.append(decay)
                 roi_event_times.append(float(x[idx]))
@@ -457,7 +460,8 @@ def compute_summary_metrics(
         frequencies[roi_id] = (
             float(valid_event_count / window_duration) if window_duration > 0 else 0.0
         )
-        latencies[roi_id] = float(np.mean(event_latencies)) if event_latencies else 0.0
+        rise_times[roi_id] = float(np.mean(event_rise_times)) if event_rise_times else 0.0
+        time_to_peaks[roi_id] = float(np.mean(event_time_to_peaks)) if event_time_to_peaks else 0.0
         decays[roi_id] = float(np.mean(event_decays)) if event_decays else 0.0
         event_times[roi_id] = roi_event_times
 
@@ -475,7 +479,7 @@ def compute_summary_metrics(
         slopes = np.diff(window)[good] / dt[good]
         rise_rates[roi_id] = float(np.nanmax(slopes)) if slopes.size else 0.0
 
-    return peaks, aucs, durations, frequencies, latencies, decays, rise_rates, event_times
+    return peaks, aucs, durations, frequencies, rise_times, time_to_peaks, decays, rise_rates, event_times
 
 
 def _stimulus_response_metrics(arr, t, stim_frame, end_frame, baseline_frames=5, slope_frames=5):

@@ -264,7 +264,8 @@ const S = {
   aucs:         null,     // {roi_id: float}
   durations:    null,     // {roi_id: float}
   frequencies:  null,     // {roi_id: float}
-  latencies:    null,     // {roi_id: float}
+  riseTimes:    null,     // {roi_id: float}
+  timeToPeaks:  null,     // {roi_id: float}
   decays:       null,     // {roi_id: float}
   riseRates:    null,     // {roi_id: float}
   eventTimes:   null,     // {roi_id: [time_s, ...]}
@@ -364,6 +365,7 @@ const D = {
   plotFrequencyChart: $('plot-frequency-chart'),
   rasterSort:    $('raster-sort'),
   plotLatency:   $('plot-latency'),
+  plotTimepeak:  $('plot-timepeak'),
   plotDecay:     $('plot-decay'),
   plotTg:        $('plot-tg'),
   plotTgPeak:    $('plot-tg-peak'),
@@ -381,6 +383,7 @@ const D = {
   tabDuration:   $('tab-duration'),
   tabFrequency:  $('tab-frequency'),
   tabLatency:    $('tab-latency'),
+  tabTimepeak:   $('tab-timepeak'),
   tabDecay:      $('tab-decay'),
   tabRise:       $('tab-rise'),
   tabTg:         $('tab-tg'),
@@ -475,6 +478,7 @@ function activatePlotTab(tab) {
   D.plotDuration.style.display = tab === 'duration' ? 'block' : 'none';
   D.plotFrequency.style.display = tab === 'frequency' ? 'block' : 'none';
   D.plotLatency.style.display = tab === 'latency' ? 'block' : 'none';
+  D.plotTimepeak.style.display = tab === 'timepeak' ? 'block' : 'none';
   D.plotDecay.style.display = tab === 'decay' ? 'block' : 'none';
   D.plotRise.style.display    = tab === 'rise'    ? 'block' : 'none';
   D.plotTg.style.display      = tab === 'tg'      ? 'flex'  : 'none';
@@ -483,7 +487,7 @@ function activatePlotTab(tab) {
 
 function invalidateAnalysis(message = '', { preserveRaw = false } = {}) {
   syncButtons();
-  if (!S.traces && !S.deltaF && !S.peaks && !S.aucs && !S.durations && !S.frequencies && !S.latencies && !S.decays && !S.riseRates && !S.tgPeaks && !S.addbackPeaks) return;
+  if (!S.traces && !S.deltaF && !S.peaks && !S.aucs && !S.durations && !S.frequencies && !S.riseTimes && !S.timeToPeaks && !S.decays && !S.riseRates && !S.tgPeaks && !S.addbackPeaks) return;
   clearAnalysisState({ preserveRaw });
   syncAnalysisUI();
   if (preserveRaw && S.traces && S.timeAxis) {
@@ -713,6 +717,7 @@ function init() {
       if (tab === 'duration' && D.plotDuration.offsetParent) Plotly.Plots.resize(D.plotDuration);
       if (tab === 'frequency' && D.plotFrequency.offsetParent) Plotly.Plots.resize(D.plotFrequencyChart);
       if (tab === 'latency' && D.plotLatency.offsetParent) Plotly.Plots.resize(D.plotLatency);
+      if (tab === 'timepeak' && D.plotTimepeak.offsetParent) Plotly.Plots.resize(D.plotTimepeak);
       if (tab === 'decay' && D.plotDecay.offsetParent) Plotly.Plots.resize(D.plotDecay);
       if (tab === 'rise' && D.plotRise.offsetParent) Plotly.Plots.resize(D.plotRise);
       if (tab === 'tg' && D.plotTg.offsetParent) {
@@ -1711,7 +1716,8 @@ async function runAnalysis() {
     S.aucs     = res.aucs || null;
     S.durations = res.durations || null;
     S.frequencies = res.frequencies || null;
-    S.latencies = res.latencies || null;
+    S.riseTimes = res.rise_times || null;
+    S.timeToPeaks = res.time_to_peaks || null;
     S.decays = res.decays || null;
     S.riseRates = res.rise_rates || null;
     S.eventTimes = res.event_times || null;
@@ -1748,6 +1754,7 @@ async function runAnalysis() {
       renderDurations();
       renderFrequencies();
       renderLatencies();
+      renderTimeToPeaks();
       renderDecays();
       renderRiseRates();
       renderTgMetrics();
@@ -2405,8 +2412,8 @@ function renderFrequencies() {
 }
 
 function renderLatencies() {
-  if (!S.latencies) return;
-  const { selected, latencies } = S;
+  if (!S.riseTimes) return;
+  const { selected, riseTimes } = S;
   const rois = analysisRois();
   const colorMap = Object.fromEntries(rois.map(r => [r.id, r.color]));
   const ids = rois.map(r => r.id).filter(id => selected.has(id));
@@ -2418,7 +2425,7 @@ function renderLatencies() {
       [{
       type: 'box',
       x: Array(ids.length).fill(''),
-      y: ids.map(id => latencies[id] ?? null),
+      y: ids.map(id => riseTimes[id] ?? null),
       text: labels,
       boxpoints: 'all',
       jitter: 0.45,
@@ -2431,7 +2438,7 @@ function renderLatencies() {
         opacity: 0.95,
         line: { color: '#1f2937', width: 0.8 },
       },
-      hovertemplate: `<b>%{text}</b><br>Time to peak (s): %{y:.4f}<extra></extra>`,
+      hovertemplate: `<b>%{text}</b><br>Rise time (10%-to-peak, s): %{y:.4f}<extra></extra>`,
     }],
     {
       paper_bgcolor: '#1f2937',
@@ -2440,9 +2447,53 @@ function renderLatencies() {
       height: 218,
       margin: { t: 28, b: 24, l: 58, r: 8 },
       xaxis: { visible: false },
-      yaxis: { gridcolor: '#374151', color: '#9ca3af', title: 'Time to peak (s)' },
+      yaxis: { gridcolor: '#374151', color: '#9ca3af', title: 'Rise time (10%-to-peak, s)' },
       showlegend: false,
-      title: { text: 'Mean Time To Peak', font: { size: 11, color: '#f3f4f6' } },
+      title: { text: 'Mean Rise Time (10%-to-peak)', font: { size: 11, color: '#f3f4f6' } },
+    },
+    PLOTLY_CONFIG,
+  );
+}
+
+function renderTimeToPeaks() {
+  if (!S.timeToPeaks) return;
+  const { selected, timeToPeaks } = S;
+  const rois = analysisRois();
+  const colorMap = Object.fromEntries(rois.map(r => [r.id, r.color]));
+  const ids = rois.map(r => r.id).filter(id => selected.has(id));
+  const labels = ids.map(id => `ROI ${id}`);
+  const colors = ids.map(id => colorMap[id] || '#ccc');
+
+  Plotly.react(
+      D.plotTimepeak,
+      [{
+      type: 'box',
+      x: Array(ids.length).fill(''),
+      y: ids.map(id => timeToPeaks[id] ?? null),
+      text: labels,
+      boxpoints: 'all',
+      jitter: 0.45,
+      pointpos: 0,
+      fillcolor: 'rgba(56,189,248,0.28)',
+      line: { color: '#38bdf8', width: 1.3 },
+      marker: {
+        color: colors,
+        size: 6,
+        opacity: 0.95,
+        line: { color: '#1f2937', width: 0.8 },
+      },
+      hovertemplate: `<b>%{text}</b><br>Time to peak (window start, s): %{y:.4f}<extra></extra>`,
+    }],
+    {
+      paper_bgcolor: '#1f2937',
+      plot_bgcolor: '#111827',
+      font: { color: '#f3f4f6', size: 10 },
+      height: 218,
+      margin: { t: 28, b: 24, l: 58, r: 8 },
+      xaxis: { visible: false },
+      yaxis: { gridcolor: '#374151', color: '#9ca3af', title: 'Time to peak (window start, s)' },
+      showlegend: false,
+      title: { text: 'Mean Time To Peak (Window Start)', font: { size: 11, color: '#f3f4f6' } },
     },
     PLOTLY_CONFIG,
   );
@@ -2682,7 +2733,8 @@ function clearAnalysisState({ preserveRaw = false } = {}) {
   S.aucs = null;
   S.durations = null;
   S.frequencies = null;
-  S.latencies = null;
+  S.riseTimes = null;
+  S.timeToPeaks = null;
   S.decays = null;
   S.riseRates = null;
   S.eventTimes = null;

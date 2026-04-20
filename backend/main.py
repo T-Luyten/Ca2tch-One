@@ -348,7 +348,8 @@ async def upload_file(request: Request, file: UploadFile = File(...), _: str = D
         'aucs': None,
         'durations': None,
         'frequencies': None,
-        'latencies': None,
+        'rise_times': None,
+        'time_to_peaks': None,
         'decays': None,
         'rise_rates': None,
         'event_times': None,
@@ -668,7 +669,8 @@ async def transfer_rois(params: TransferRoisParams, _: str = Depends(get_current
     target['bg_trace'] = None
     target['durations'] = None
     target['frequencies'] = None
-    target['latencies'] = None
+    target['rise_times'] = None
+    target['time_to_peaks'] = None
     target['decays'] = None
     target['event_times'] = None
     target['peaks'] = None
@@ -746,7 +748,7 @@ async def analyze(request: Request, file_id: str, params: AnalyzeParams, _: str 
             baseline_start=params.baseline_start,
             baseline_end=params.baseline_end,
         )
-        peaks, aucs, durations, frequencies, latencies, decays, rise_rates, event_times = compute_summary_metrics(
+        peaks, aucs, durations, frequencies, rise_times, time_to_peaks, decays, rise_rates, event_times = compute_summary_metrics(
             delta_f,
             sess['metadata']['time_axis'],
             baseline_start=params.baseline_start,
@@ -779,7 +781,8 @@ async def analyze(request: Request, file_id: str, params: AnalyzeParams, _: str 
     sess['aucs'] = aucs
     sess['durations'] = durations
     sess['frequencies'] = frequencies
-    sess['latencies'] = latencies
+    sess['rise_times'] = rise_times
+    sess['time_to_peaks'] = time_to_peaks
     sess['decays'] = decays
     sess['rise_rates'] = rise_rates
     sess['event_times'] = event_times
@@ -803,7 +806,8 @@ async def analyze(request: Request, file_id: str, params: AnalyzeParams, _: str 
         'aucs':          {str(k): v for k, v in aucs.items()},
         'durations':     {str(k): v for k, v in durations.items()},
         'frequencies':   {str(k): v for k, v in frequencies.items()},
-        'latencies':     {str(k): v for k, v in latencies.items()},
+        'rise_times':    {str(k): v for k, v in rise_times.items()},
+        'time_to_peaks': {str(k): v for k, v in time_to_peaks.items()},
         'decays':        {str(k): v for k, v in decays.items()},
         'rise_rates':    {str(k): v for k, v in rise_rates.items()},
         'event_times':   {str(k): v for k, v in event_times.items()},
@@ -997,7 +1001,8 @@ def _clear_analysis_results(sess: dict):
     sess['aucs'] = None
     sess['durations'] = None
     sess['frequencies'] = None
-    sess['latencies'] = None
+    sess['rise_times'] = None
+    sess['time_to_peaks'] = None
     sess['decays'] = None
     sess['rise_rates'] = None
     sess['event_times'] = None
@@ -1185,7 +1190,7 @@ def _build_analysis_workbook(sess):
 
     metric_rows = [[
         'roi_id', 'peak', 'auc', 'event_fwhm', 'event_frequency',
-        'time_to_peak', 'decay_t_half', 'rate_of_rise',
+        'rise_time_10pct_to_peak', 'time_to_peak_window_start', 'decay_t_half', 'rate_of_rise',
         'tg_peak', 'tg_slope', 'tg_auc',
         'addback_peak', 'addback_slope', 'addback_auc', 'addback_latency',
         'event_times_s',
@@ -1197,7 +1202,8 @@ def _build_analysis_workbook(sess):
             sess['aucs'].get(rid, ''),
             sess['durations'].get(rid, ''),
             sess['frequencies'].get(rid, ''),
-            sess['latencies'].get(rid, ''),
+            sess['rise_times'].get(rid, ''),
+            sess['time_to_peaks'].get(rid, ''),
             sess['decays'].get(rid, ''),
             sess['rise_rates'].get(rid, ''),
             sess['tg_peaks'].get(rid, ''),
