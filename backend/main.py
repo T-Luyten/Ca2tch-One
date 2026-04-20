@@ -56,8 +56,8 @@ SESSION_SWEEP_INTERVAL = 5 * 60     # sweep every 5 minutes
 _max_rss_mb = int(os.environ.get('CACELLFIE_MAX_RSS_MB', '1500'))
 MAX_PROCESS_RSS_BYTES = _max_rss_mb * 1024 * 1024 if _max_rss_mb > 0 else None
 
-# Maximum file upload size (500 MB)
-MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024
+# Maximum file upload size (700 MB)
+MAX_FILE_SIZE_BYTES = 700 * 1024 * 1024
 
 
 async def _evict_stale_sessions():
