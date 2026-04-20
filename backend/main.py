@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordRequestForm
 from PIL import ImageDraw
 from pydantic import BaseModel, field_validator
+from scipy import ndimage
 from skimage import measure
 
 from auth import get_current_user, create_access_token, AUTH_USERNAME, AUTH_PASSWORD_HASH, pwd_context, AUTH_TOKEN_EXPIRE_HOURS
@@ -579,6 +580,13 @@ async def merge_rois(file_id: str, params: MergeRoisParams, _: str = Depends(get
     keep_id = min(roi_ids)
     remove_id = max(roi_ids)
     labels = sess['labels']
+
+    mask_keep = labels == keep_id
+    mask_remove = labels == remove_id
+    dilated_keep = ndimage.binary_dilation(mask_keep)
+    if not (dilated_keep & mask_remove).any():
+        raise HTTPException(400, "ROIs must be touching to merge. The selected ROIs are not adjacent.")
+
     labels[labels == remove_id] = keep_id
 
     merged_regions = [r for r in measure.regionprops(labels) if r.label == keep_id]
