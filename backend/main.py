@@ -15,11 +15,14 @@ from xml.sax.saxutils import escape
 import psutil
 import numpy as np
 from datetime import timedelta
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile, Depends
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordRequestForm
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from PIL import ImageDraw
 from pydantic import BaseModel, field_validator
 from scipy import ndimage
@@ -77,6 +80,10 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Ca2+ cell-fie", lifespan=lifespan)
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, lambda request, exc: HTTPException(429, "Too many requests. Please try again later."))
 
 app.add_middleware(
     CORSMiddleware,
@@ -267,7 +274,8 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
 
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...), _: str = Depends(get_current_user)):
+@limiter.limit("10/hour")
+async def upload_file(request: Request, file: UploadFile = File(...), _: str = Depends(get_current_user)):
     if not (file.filename or '').lower().endswith('.nd2'):
         raise HTTPException(400, "Only .nd2 files are supported")
 
@@ -490,7 +498,8 @@ async def get_contrast(
 
 
 @app.post("/api/detect/{file_id}")
-async def detect(file_id: str, params: DetectParams, _: str = Depends(get_current_user)):
+@limiter.limit("30/hour")
+async def detect(request: Request, file_id: str, params: DetectParams, _: str = Depends(get_current_user)):
     sess = _get_session(file_id)
     data = sess['data']
 
@@ -679,7 +688,8 @@ async def transfer_rois(params: TransferRoisParams, _: str = Depends(get_current
 
 
 @app.post("/api/analyze/{file_id}")
-async def analyze(file_id: str, params: AnalyzeParams, _: str = Depends(get_current_user)):
+@limiter.limit("30/hour")
+async def analyze(request: Request, file_id: str, params: AnalyzeParams, _: str = Depends(get_current_user)):
     sess = _get_session(file_id)
     if sess['labels'] is None:
         raise HTTPException(400, "Run detection first")
