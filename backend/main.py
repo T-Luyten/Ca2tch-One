@@ -21,7 +21,7 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordRequestForm
 from PIL import ImageDraw
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from skimage import measure
 
 from auth import get_current_user, create_access_token, AUTH_USERNAME, AUTH_PASSWORD_HASH, pwd_context, AUTH_TOKEN_EXPIRE_HOURS
@@ -99,6 +99,62 @@ class DetectParams(BaseModel):
     allow_edge_rois: bool = False
     exclude_mask: Optional[List[List[int]]] = None  # [[y,x], ...]
 
+    @field_validator('projection_type')
+    @classmethod
+    def validate_projection_type(cls, v):
+        if v not in ('mean', 'max', 'min'):
+            raise ValueError("projection_type must be 'mean', 'max', or 'min'")
+        return v
+
+    @field_validator('min_size')
+    @classmethod
+    def validate_min_size(cls, v):
+        if v <= 0:
+            raise ValueError("min_size must be positive")
+        return v
+
+    @field_validator('max_size')
+    @classmethod
+    def validate_max_size(cls, v):
+        if v <= 0:
+            raise ValueError("max_size must be positive")
+        return v
+
+    @field_validator('threshold_adjust')
+    @classmethod
+    def validate_threshold_adjust(cls, v):
+        if v <= 0:
+            raise ValueError("threshold_adjust must be positive")
+        return v
+
+    @field_validator('smooth_sigma')
+    @classmethod
+    def validate_smooth_sigma(cls, v):
+        if v < 0:
+            raise ValueError("smooth_sigma must be non-negative")
+        return v
+
+    @field_validator('background_radius')
+    @classmethod
+    def validate_background_radius(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("background_radius must be positive")
+        return v
+
+    @field_validator('seed_sigma')
+    @classmethod
+    def validate_seed_sigma(cls, v):
+        if v <= 0:
+            raise ValueError("seed_sigma must be positive")
+        return v
+
+    @field_validator('max_size', mode='after')
+    @classmethod
+    def validate_size_range(cls, v, info):
+        if 'data' in info.data and info.data.get('min_size') and v < info.data['min_size']:
+            raise ValueError("max_size must be >= min_size")
+        return v
+
 
 class AnalyzeParams(BaseModel):
     channel: int = 0
@@ -122,6 +178,62 @@ class AnalyzeParams(BaseModel):
     addback_end_frame: int = 0
     addback_baseline_frames: int = 5
     addback_slope_frames: int = 5
+
+    @field_validator('channel')
+    @classmethod
+    def validate_channel(cls, v):
+        if v < 0:
+            raise ValueError("channel must be non-negative")
+        return v
+
+    @field_validator('baseline_start', 'baseline_end', 'auc_start', 'auc_end', 'tg_frame', 'tg_end_frame', 'addback_frame', 'addback_end_frame')
+    @classmethod
+    def validate_frame_indices(cls, v):
+        if v < 0:
+            raise ValueError("frame indices must be non-negative")
+        return v
+
+    @field_validator('bg_mode')
+    @classmethod
+    def validate_bg_mode(cls, v):
+        if v not in ('none', 'auto', 'manual'):
+            raise ValueError("bg_mode must be 'none', 'auto', or 'manual'")
+        return v
+
+    @field_validator('bg_percentile')
+    @classmethod
+    def validate_bg_percentile(cls, v):
+        if not (0 <= v <= 100):
+            raise ValueError("bg_percentile must be between 0 and 100")
+        return v
+
+    @field_validator('photobleach_mode')
+    @classmethod
+    def validate_photobleach_mode(cls, v):
+        if v not in ('none', 'linear', 'single_exp'):
+            raise ValueError("photobleach_mode must be 'none', 'linear', or 'single_exp'")
+        return v
+
+    @field_validator('analysis_mode')
+    @classmethod
+    def validate_analysis_mode(cls, v):
+        if v not in ('single', 'ratio'):
+            raise ValueError("analysis_mode must be 'single' or 'ratio'")
+        return v
+
+    @field_validator('ratio_ch_num', 'ratio_ch_den')
+    @classmethod
+    def validate_ratio_channels(cls, v):
+        if v < 0:
+            raise ValueError("channel indices must be non-negative")
+        return v
+
+    @field_validator('tg_baseline_frames', 'tg_slope_frames', 'addback_baseline_frames', 'addback_slope_frames')
+    @classmethod
+    def validate_frame_counts(cls, v):
+        if v < 0:
+            raise ValueError("frame counts must be non-negative")
+        return v
 
 
 class TransferRoisParams(BaseModel):
@@ -240,6 +352,9 @@ async def get_frame(
     colormap: str = Query('green'),
     _: str = Depends(get_current_user),
 ):
+    if mode not in ('channel', 'ratio'):
+        raise HTTPException(400, "mode must be 'channel' or 'ratio'")
+
     sess = _get_session(file_id)
     data = sess['data']
     meta = sess['metadata']
@@ -284,6 +399,11 @@ async def get_projection_image(
     colormap: str = Query('green'),
     _: str = Depends(get_current_user),
 ):
+    if type not in ('mean', 'max', 'min'):
+        raise HTTPException(400, "type must be 'mean', 'max', or 'min'")
+    if mode not in ('channel', 'ratio'):
+        raise HTTPException(400, "mode must be 'channel' or 'ratio'")
+
     sess = _get_session(file_id)
     meta = sess['metadata']
     channel = int(np.clip(channel, 0, meta['n_channels'] - 1))
@@ -320,6 +440,13 @@ async def get_contrast(
     p_high: float = Query(99.5),
     _: str = Depends(get_current_user),
 ):
+    if not (0 <= p_low <= 100):
+        raise HTTPException(400, "p_low must be between 0 and 100")
+    if not (0 <= p_high <= 100):
+        raise HTTPException(400, "p_high must be between 0 and 100")
+    if p_low > p_high:
+        raise HTTPException(400, "p_low must be <= p_high")
+
     sess = _get_session(file_id)
     meta = sess['metadata']
     channel = int(np.clip(channel, 0, meta['n_channels'] - 1))
@@ -653,6 +780,9 @@ async def analyze(file_id: str, params: AnalyzeParams, _: str = Depends(get_curr
 
 @app.get("/api/export/{file_id}")
 async def export_csv(file_id: str, type: str = Query('raw'), _: str = Depends(get_current_user)):
+    if type not in ('raw', 'delta_f'):
+        raise HTTPException(400, "type must be 'raw' or 'delta_f'")
+
     sess = _get_session(file_id)
     data_map = sess['traces'] if type == 'raw' else sess['delta_f']
     if data_map is None:
@@ -706,6 +836,13 @@ async def export_overlay_image(
     colormap: str = Query('green'),
     _: str = Depends(get_current_user),
 ):
+    if view not in ('frame', 'projection'):
+        raise HTTPException(400, "view must be 'frame' or 'projection'")
+    if proj_type not in ('mean', 'max', 'min'):
+        raise HTTPException(400, "proj_type must be 'mean', 'max', or 'min'")
+    if mode not in ('channel', 'ratio'):
+        raise HTTPException(400, "mode must be 'channel' or 'ratio'")
+
     sess = _get_session(file_id)
     if not sess['rois']:
         raise HTTPException(400, "No ROIs available to overlay")
