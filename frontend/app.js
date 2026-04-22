@@ -1607,24 +1607,26 @@ async function runAnalysis() {
     S.timeAxis = res.time_axis;
     S.traces   = res.traces;
     S.deltaF   = res.delta_f;
+    // Return null for missing or empty-object API fields so tab visibility checks work correctly
+    const nonEmpty = o => (o && typeof o === 'object' && Object.keys(o).length > 0) ? o : null;
     S.bgTrace  = Array.isArray(res.bg_trace) && res.bg_trace.length ? res.bg_trace : null;
-    S.peaks    = res.peaks || null;
-    S.aucs     = res.aucs || null;
-    S.durations = res.durations || null;
-    S.frequencies = res.frequencies || null;
-    S.riseTimes = res.rise_times || null;
-    S.timeToPeaks = res.time_to_peaks || null;
-    S.decays = res.decays || null;
-    S.decayTaus = res.decay_taus || null;
-    S.riseRates = res.rise_rates || null;
-    S.eventTimes = res.event_times || null;
-    S.tgPeaks = res.tg_peaks || null;
-    S.tgSlopes = res.tg_slopes || null;
-    S.tgAucs = res.tg_aucs || null;
-    S.addbackPeaks = res.addback_peaks || null;
-    S.addbackSlopes = res.addback_slopes || null;
-    S.addbackAucs = res.addback_aucs || null;
-    S.addbackLatencies = res.addback_latencies || null;
+    S.peaks    = nonEmpty(res.peaks);
+    S.aucs     = nonEmpty(res.aucs);
+    S.durations = nonEmpty(res.durations);
+    S.frequencies = nonEmpty(res.frequencies);
+    S.riseTimes = nonEmpty(res.rise_times);
+    S.timeToPeaks = nonEmpty(res.time_to_peaks);
+    S.decays = nonEmpty(res.decays);
+    S.decayTaus = nonEmpty(res.decay_taus);
+    S.riseRates = nonEmpty(res.rise_rates);
+    S.eventTimes = nonEmpty(res.event_times);
+    S.tgPeaks = nonEmpty(res.tg_peaks);
+    S.tgSlopes = nonEmpty(res.tg_slopes);
+    S.tgAucs = nonEmpty(res.tg_aucs);
+    S.addbackPeaks = nonEmpty(res.addback_peaks);
+    S.addbackSlopes = nonEmpty(res.addback_slopes);
+    S.addbackAucs = nonEmpty(res.addback_aucs);
+    S.addbackLatencies = nonEmpty(res.addback_latencies);
     // S.analysisMode is not overwritten here — it reflects the user's dropdown
     // selection and was already sent to the backend. Overwriting it from the
     // response was causing the dropdown and state to drift out of sync.
