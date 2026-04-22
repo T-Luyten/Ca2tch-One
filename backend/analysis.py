@@ -356,7 +356,7 @@ _TAU_FIT_FRAMES = 60  # max frames to use for decay tau fit
 
 
 def _event_decay_tau(window, x, peak_idx):
-    """Fit a single exponential to the falling phase and return tau (time constant)."""
+    """Estimate decay tau via log-linear fit on the falling phase (no iteration)."""
     peak_value = window[peak_idx]
     if np.isnan(peak_value) or peak_value <= 0:
         return float('nan')
@@ -364,6 +364,7 @@ def _event_decay_tau(window, x, peak_idx):
     end = min(peak_idx + _TAU_FIT_FRAMES, len(window))
     tail_w = window[peak_idx:end]
     tail_x = x[peak_idx:end]
+
     valid = ~np.isnan(tail_w)
     if valid.sum() < 4:
         return float('nan')
@@ -371,22 +372,17 @@ def _event_decay_tau(window, x, peak_idx):
     tw = tail_w[valid]
     tx = tail_x[valid]
     baseline = float(np.nanmin(tw))
-    amplitude = float(tw[0]) - baseline
-    if amplitude <= 0:
+    above = tw - baseline
+    # keep only the strictly positive, monotonically decaying portion
+    positive = above > 0
+    if positive.sum() < 4:
         return float('nan')
 
     try:
-        t0 = float(tx[0])
-        popt, _ = curve_fit(
-            lambda t, tau, c: amplitude * np.exp(-(t - t0) / tau) + c,
-            tx,
-            tw,
-            p0=(float(tx[-1] - tx[0]) / 2 or 1.0, baseline),
-            bounds=([1e-6, -np.inf], [np.inf, np.inf]),
-            maxfev=1000,
-        )
-        tau = float(popt[0])
-        return tau if np.isfinite(tau) and tau > 0 else float('nan')
+        slope, _ = np.polyfit(tx[positive], np.log(above[positive]), 1)
+        if slope >= 0 or not np.isfinite(slope):
+            return float('nan')
+        return float(-1.0 / slope)
     except Exception:
         return float('nan')
 
