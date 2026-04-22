@@ -2680,10 +2680,25 @@ function syncAnalysisUI() {
   updateAssayValidationHints();
   D.plotsSection.style.display = hasRaw ? 'flex' : 'none';
   D.exportRow.style.display = hasFull ? 'flex' : 'none';
-  [D.tabDelta, D.tabSummary, D.tabDuration, D.tabFrequency, D.tabLatency, D.tabDecay, D.tabDecayTau, D.tabRise, D.tabTg, D.tabAddback].forEach(btn => {
-    btn.style.display = hasFull ? '' : 'none';
-  });
+  const show = (btn, condition) => { btn.style.display = condition ? '' : 'none'; };
+  show(D.tabDelta,    hasFull);
+  show(D.tabSummary,  !!(S.peaks && S.aucs));
+  show(D.tabDuration, !!S.durations);
+  show(D.tabFrequency,!!S.frequencies);
+  show(D.tabLatency,  !!S.riseTimes);
+  show(D.tabTimepeak, !!S.timeToPeaks);
+  show(D.tabDecay,    !!S.decays);
+  show(D.tabDecayTau, !!S.decayTaus);
+  show(D.tabRise,     !!S.riseRates);
+  show(D.tabTg,       !!(S.tgPeaks && S.tgSlopes && S.tgAucs));
+  show(D.tabAddback,  !!(S.addbackPeaks && S.addbackSlopes && S.addbackAucs));
   if (!hasFull && hasRaw) activatePlotTab('raw');
+
+  // if the currently active tab is now hidden, fall back to delta
+  const activeBtn = [...D.tabBtns].find(b => b.classList.contains('active'));
+  if (activeBtn && activeBtn.style.display === 'none') {
+    activatePlotTab(hasFull ? 'delta' : 'raw');
+  }
 }
 
 function cleanupFileSession(fileId, opts = {}) {
