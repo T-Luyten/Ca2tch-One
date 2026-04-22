@@ -221,6 +221,7 @@ const D = {
   ratioCh340El:   $('ratio-ch-num'),
   ratioCh380El:   $('ratio-ch-den'),
   photobleachMode:$('photobleach-mode'),
+  computeDecayTau:$('compute-decay-tau'),
 
   baselineStart: $('baseline-start'),
   baselineEnd:   $('baseline-end'),
@@ -1593,6 +1594,7 @@ async function runAnalysis() {
     addback_end_frame: +D.addbackEndFrame.value,
     addback_baseline_frames: +D.addbackBaselineFrames.value,
     addback_slope_frames: +D.addbackSlopeFrames.value,
+    compute_decay_tau: D.computeDecayTau.checked,
   };
 
   try {

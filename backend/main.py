@@ -186,6 +186,7 @@ class AnalyzeParams(BaseModel):
     addback_end_frame: int = 0
     addback_baseline_frames: int = 5
     addback_slope_frames: int = 5
+    compute_decay_tau: bool = False
 
     @field_validator('channel')
     @classmethod
@@ -741,6 +742,7 @@ async def analyze(request: Request, file_id: str, params: AnalyzeParams):
             baseline_end=params.baseline_end,
             auc_start=params.auc_start,
             auc_end=params.auc_end,
+            compute_decay_tau=params.compute_decay_tau,
         )
         tg_peaks, tg_slopes, tg_aucs, addback_peaks, addback_slopes, addback_aucs, addback_latencies = compute_addback_metrics(
             delta_f,

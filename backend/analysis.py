@@ -440,6 +440,7 @@ def compute_summary_metrics(
     auc_start=0,
     auc_end=0,
     threshold_std_multiplier=2.0,
+    compute_decay_tau=False,
 ):
     """
     Compute peak, suprathreshold AUC, mean event FWHM, event frequency,
@@ -514,14 +515,15 @@ def compute_summary_metrics(
                 onset_time = _event_onset_time(window, x, idx, baseline_level=baseline_level)
                 width = _event_fwhm(window, x, idx)
                 decay = _event_decay_half_time(window, x, idx)
-                tau = _event_decay_tau(window, x, idx)
                 if not (np.isfinite(onset_time) and np.isfinite(width) and np.isfinite(decay)):
                     continue
                 event_rise_times.append(float(x[idx]) - onset_time)
                 event_widths.append(width)
                 event_decays.append(decay)
-                if np.isfinite(tau):
-                    event_decay_taus.append(tau)
+                if compute_decay_tau:
+                    tau = _event_decay_tau(window, x, idx)
+                    if np.isfinite(tau):
+                        event_decay_taus.append(tau)
 
         durations[roi_id] = float(np.mean(event_widths)) if event_widths else 0.0
         window_duration = float(x[-1] - x[0]) if x.size > 1 else 0.0
