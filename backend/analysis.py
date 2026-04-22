@@ -458,7 +458,7 @@ def compute_summary_metrics(
     rise_times = {}
     time_to_peaks = {}
     decays = {}
-    decay_taus = {}
+    decay_taus = {} if compute_decay_tau else None
     rise_rates = {}
     event_times = {}
 
@@ -523,7 +523,7 @@ def compute_summary_metrics(
                 if compute_decay_tau:
                     tau = _event_decay_tau(window, x, idx)
                     if np.isfinite(tau):
-                        event_decay_taus.append(tau)
+                        event_decay_taus.append(float(tau))
 
         durations[roi_id] = float(np.mean(event_widths)) if event_widths else 0.0
         window_duration = float(x[-1] - x[0]) if x.size > 1 else 0.0
@@ -533,7 +533,8 @@ def compute_summary_metrics(
         rise_times[roi_id] = float(np.mean(event_rise_times)) if event_rise_times else 0.0
         time_to_peaks[roi_id] = float(np.mean(event_time_to_peaks)) if event_time_to_peaks else 0.0
         decays[roi_id] = float(np.mean(event_decays)) if event_decays else 0.0
-        decay_taus[roi_id] = float(np.mean(event_decay_taus)) if event_decay_taus else 0.0
+        if compute_decay_tau:
+            decay_taus[roi_id] = float(np.mean(event_decay_taus)) if event_decay_taus else 0.0
         event_times[roi_id] = roi_event_times
 
         if window.size < 2 or x.size < 2:
@@ -625,14 +626,6 @@ def compute_addback_metrics(
     addback_baseline_frames=5,
     addback_slope_frames=5,
 ):
-    tg_peaks = {}
-    tg_slopes = {}
-    tg_aucs = {}
-    addback_peaks = {}
-    addback_slopes = {}
-    addback_aucs = {}
-    addback_latencies = {}
-
     t = np.array(time_axis, dtype=float)
     tg_baseline_frames = max(1, int(tg_baseline_frames))
     tg_slope_frames = max(2, int(tg_slope_frames))
@@ -641,10 +634,24 @@ def compute_addback_metrics(
     tg_end_frame = int(tg_end_frame)
     addback_end_frame = int(addback_end_frame)
 
+    run_tg = tg_end_frame > 0
+    run_addback = addback_end_frame > 0
+
+    if not run_tg and not run_addback:
+        return None, None, None, None, None, None, None
+
+    tg_peaks = {} if run_tg else None
+    tg_slopes = {} if run_tg else None
+    tg_aucs = {} if run_tg else None
+    addback_peaks = {} if run_addback else None
+    addback_slopes = {} if run_addback else None
+    addback_aucs = {} if run_addback else None
+    addback_latencies = {} if run_addback else None
+
     for roi_id, trace in traces.items():
         arr = np.array(trace, dtype=float)
 
-        if tg_end_frame > 0:
+        if run_tg:
             tg = _stimulus_response_metrics(
                 arr, t,
                 stim_frame=int(tg_frame),
@@ -652,15 +659,11 @@ def compute_addback_metrics(
                 baseline_frames=tg_baseline_frames,
                 slope_frames=tg_slope_frames,
             )
-        else:
-            tg = {
-                'peak': 0.0,
-                'slope': 0.0,
-                'auc': 0.0,
-                'time_to_peak': 0.0,
-            }
+            tg_peaks[roi_id] = tg['peak']
+            tg_slopes[roi_id] = tg['slope']
+            tg_aucs[roi_id] = tg['auc']
 
-        if addback_end_frame > 0:
+        if run_addback:
             addback = _stimulus_response_metrics(
                 arr, t,
                 stim_frame=int(addback_frame),
@@ -668,21 +671,10 @@ def compute_addback_metrics(
                 baseline_frames=addback_baseline_frames,
                 slope_frames=addback_slope_frames,
             )
-        else:
-            addback = {
-                'peak': 0.0,
-                'slope': 0.0,
-                'auc': 0.0,
-                'time_to_peak': 0.0,
-            }
-
-        tg_peaks[roi_id] = tg['peak']
-        tg_slopes[roi_id] = tg['slope']
-        tg_aucs[roi_id] = tg['auc']
-        addback_peaks[roi_id] = addback['peak']
-        addback_slopes[roi_id] = addback['slope']
-        addback_aucs[roi_id] = addback['auc']
-        addback_latencies[roi_id] = addback['time_to_peak']
+            addback_peaks[roi_id] = addback['peak']
+            addback_slopes[roi_id] = addback['slope']
+            addback_aucs[roi_id] = addback['auc']
+            addback_latencies[roi_id] = addback['time_to_peak']
 
     return (
         tg_peaks,
