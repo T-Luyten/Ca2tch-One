@@ -824,7 +824,9 @@ async def export_csv(file_id: str, type: str = Query('raw')):
     for i, t in enumerate(time_axis):
         writer.writerow([f'{t:.4f}'] + [f'{data_map[rid][i]:.4f}' for rid in roi_ids])
 
-    fname = f'calcium_{"raw" if type == "raw" else "deltaF"}.csv'
+    stem = os.path.splitext(sess.get('file_name') or 'calcium')[0]
+    suffix = 'raw_analysis' if type == 'raw' else 'deltaF'
+    fname = f'{stem}_{suffix}.csv'
     return Response(
         content=out.getvalue(),
         media_type='text/csv',
