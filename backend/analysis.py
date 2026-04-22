@@ -352,6 +352,41 @@ def _event_onset_time(window, x, peak_idx, baseline_level, onset_fraction=0.1):
     return float('nan')
 
 
+def _event_decay_tau(window, x, peak_idx):
+    """Fit a single exponential to the falling phase and return tau (time constant)."""
+    peak_value = window[peak_idx]
+    if np.isnan(peak_value) or peak_value <= 0:
+        return float('nan')
+
+    tail_w = window[peak_idx:]
+    tail_x = x[peak_idx:]
+    valid = ~np.isnan(tail_w)
+    if valid.sum() < 4:
+        return float('nan')
+
+    tw = tail_w[valid]
+    tx = tail_x[valid]
+    baseline = float(np.nanmin(tw))
+    amplitude = float(tw[0]) - baseline
+    if amplitude <= 0:
+        return float('nan')
+
+    try:
+        t0 = float(tx[0])
+        popt, _ = curve_fit(
+            lambda t, tau, c: amplitude * np.exp(-(t - t0) / tau) + c,
+            tx,
+            tw,
+            p0=(float(tx[-1] - tx[0]) / 2 or 1.0, baseline),
+            bounds=([1e-6, -np.inf], [np.inf, np.inf]),
+            maxfev=5000,
+        )
+        tau = float(popt[0])
+        return tau if np.isfinite(tau) and tau > 0 else float('nan')
+    except Exception:
+        return float('nan')
+
+
 def _event_decay_half_time(window, x, peak_idx):
     peak_value = window[peak_idx]
     if np.isnan(peak_value) or peak_value <= 0:
@@ -398,6 +433,7 @@ def compute_summary_metrics(
     rise_times = {}
     time_to_peaks = {}
     decays = {}
+    decay_taus = {}
     rise_rates = {}
     event_times = {}
 
@@ -444,6 +480,7 @@ def compute_summary_metrics(
         event_rise_times = []
         event_time_to_peaks = []
         event_decays = []
+        event_decay_taus = []
         roi_event_times = []
         if x.size:
             for idx in peak_indices:
@@ -453,11 +490,14 @@ def compute_summary_metrics(
                 onset_time = _event_onset_time(window, x, idx, baseline_level=baseline_level)
                 width = _event_fwhm(window, x, idx)
                 decay = _event_decay_half_time(window, x, idx)
+                tau = _event_decay_tau(window, x, idx)
                 if not (np.isfinite(onset_time) and np.isfinite(width) and np.isfinite(decay)):
                     continue
                 event_rise_times.append(float(x[idx]) - onset_time)
                 event_widths.append(width)
                 event_decays.append(decay)
+                if np.isfinite(tau):
+                    event_decay_taus.append(tau)
 
         durations[roi_id] = float(np.mean(event_widths)) if event_widths else 0.0
         window_duration = float(x[-1] - x[0]) if x.size > 1 else 0.0
@@ -467,6 +507,7 @@ def compute_summary_metrics(
         rise_times[roi_id] = float(np.mean(event_rise_times)) if event_rise_times else 0.0
         time_to_peaks[roi_id] = float(np.mean(event_time_to_peaks)) if event_time_to_peaks else 0.0
         decays[roi_id] = float(np.mean(event_decays)) if event_decays else 0.0
+        decay_taus[roi_id] = float(np.mean(event_decay_taus)) if event_decay_taus else 0.0
         event_times[roi_id] = roi_event_times
 
         if window.size < 2 or x.size < 2:
@@ -483,7 +524,7 @@ def compute_summary_metrics(
         slopes = np.diff(window)[good] / dt[good]
         rise_rates[roi_id] = float(np.nanmax(slopes)) if slopes.size else 0.0
 
-    return peaks, aucs, durations, frequencies, rise_times, time_to_peaks, decays, rise_rates, event_times
+    return peaks, aucs, durations, frequencies, rise_times, time_to_peaks, decays, decay_taus, rise_rates, event_times
 
 
 def _stimulus_response_metrics(arr, t, stim_frame, end_frame, baseline_frames=5, slope_frames=5):
