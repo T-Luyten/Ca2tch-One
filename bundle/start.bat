@@ -16,9 +16,9 @@ if not exist "%PYTHON%" (
 cd /d "%BUNDLE_DIR%backend"
 
 echo.
-echo   Starting Flux Ca2+pacitor
+echo   Starting Ca2+tch-One
 echo   Opening %APP_URL% in your browser...
 echo.
 
 start "" "%APP_URL%"
-"%PYTHON%" -m uvicorn main:app --host 0.0.0.0 --port 8001
+"%PYTHON%" -m uvicorn main:app --host 127.0.0.1 --port 8001

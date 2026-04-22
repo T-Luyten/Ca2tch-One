@@ -164,8 +164,10 @@ const S = {
   aucs:         null,     // {roi_id: float}
   durations:    null,     // {roi_id: float}
   frequencies:  null,     // {roi_id: float}
-  latencies:    null,     // {roi_id: float}
+  riseTimes:    null,     // {roi_id: float}
+  timeToPeaks:  null,     // {roi_id: float}
   decays:       null,     // {roi_id: float}
+  decayTaus:    null,     // {roi_id: float}
   riseRates:    null,     // {roi_id: float}
   eventTimes:   null,     // {roi_id: [time_s, ...]}
   tgPeaks:      null,     // {roi_id: float}
@@ -219,6 +221,7 @@ const D = {
   ratioCh340El:   $('ratio-ch-num'),
   ratioCh380El:   $('ratio-ch-den'),
   photobleachMode:$('photobleach-mode'),
+  computeDecayTau:$('compute-decay-tau'),
 
   baselineStart: $('baseline-start'),
   baselineEnd:   $('baseline-end'),
@@ -264,7 +267,9 @@ const D = {
   plotFrequencyChart: $('plot-frequency-chart'),
   rasterSort:    $('raster-sort'),
   plotLatency:   $('plot-latency'),
+  plotTimepeak:  $('plot-timepeak'),
   plotDecay:     $('plot-decay'),
+  plotDecayTau:  $('plot-decay-tau'),
   plotTg:        $('plot-tg'),
   plotTgPeak:    $('plot-tg-peak'),
   plotTgSlope:   $('plot-tg-slope'),
@@ -281,7 +286,9 @@ const D = {
   tabDuration:   $('tab-duration'),
   tabFrequency:  $('tab-frequency'),
   tabLatency:    $('tab-latency'),
+  tabTimepeak:   $('tab-timepeak'),
   tabDecay:      $('tab-decay'),
+  tabDecayTau:   $('tab-decay-tau'),
   tabRise:       $('tab-rise'),
   tabTg:         $('tab-tg'),
   tabAddback:    $('tab-addback'),
@@ -375,7 +382,9 @@ function activatePlotTab(tab) {
   D.plotDuration.style.display = tab === 'duration' ? 'block' : 'none';
   D.plotFrequency.style.display = tab === 'frequency' ? 'block' : 'none';
   D.plotLatency.style.display = tab === 'latency' ? 'block' : 'none';
+  D.plotTimepeak.style.display = tab === 'timepeak' ? 'block' : 'none';
   D.plotDecay.style.display = tab === 'decay' ? 'block' : 'none';
+  D.plotDecayTau.style.display = tab === 'decay-tau' ? 'block' : 'none';
   D.plotRise.style.display    = tab === 'rise'    ? 'block' : 'none';
   D.plotTg.style.display      = tab === 'tg'      ? 'flex'  : 'none';
   D.plotAddback.style.display = tab === 'addback' ? 'flex'  : 'none';
@@ -383,7 +392,7 @@ function activatePlotTab(tab) {
 
 function invalidateAnalysis(message = '', { preserveRaw = false } = {}) {
   syncButtons();
-  if (!S.traces && !S.deltaF && !S.peaks && !S.aucs && !S.durations && !S.frequencies && !S.latencies && !S.decays && !S.riseRates && !S.tgPeaks && !S.addbackPeaks) return;
+  if (!S.traces && !S.deltaF && !S.peaks && !S.aucs && !S.durations && !S.frequencies && !S.riseTimes && !S.timeToPeaks && !S.decays && !S.decayTaus && !S.riseRates && !S.tgPeaks && !S.addbackPeaks) return;
   clearAnalysisState({ preserveRaw });
   syncAnalysisUI();
   if (preserveRaw && S.traces && S.timeAxis) {
@@ -402,7 +411,6 @@ function init() {
   S.analysisMode = D.analysisModeEl.value;
   D.ratioOpts.style.display = S.analysisMode === 'ratio' ? 'block' : 'none';
   S.photobleachMode = D.photobleachMode.value;
-
   S.bgMode = D.bgMode.value;
   D.bgAutoOpts.style.display   = S.bgMode === 'auto'   ? 'block' : 'none';
   D.bgManualOpts.style.display = S.bgMode === 'manual' ? 'block' : 'none';
@@ -493,7 +501,6 @@ function init() {
   D.seedSigma.addEventListener('input', () => {
     D.seedSigmaVal.textContent = (+D.seedSigma.value).toFixed(1);
   });
-
   D.detectBtn.addEventListener('click', runDetection);
   D.transferBtn.addEventListener('click', transferROIsToMeasurement);
   D.analyzeBtn.addEventListener('click', runAnalysis);
@@ -606,7 +613,9 @@ function init() {
       if (tab === 'duration' && D.plotDuration.offsetParent) Plotly.Plots.resize(D.plotDuration);
       if (tab === 'frequency' && D.plotFrequency.offsetParent) Plotly.Plots.resize(D.plotFrequencyChart);
       if (tab === 'latency' && D.plotLatency.offsetParent) Plotly.Plots.resize(D.plotLatency);
+      if (tab === 'timepeak' && D.plotTimepeak.offsetParent) Plotly.Plots.resize(D.plotTimepeak);
       if (tab === 'decay' && D.plotDecay.offsetParent) Plotly.Plots.resize(D.plotDecay);
+      if (tab === 'decay-tau' && D.plotDecayTau.offsetParent) Plotly.Plots.resize(D.plotDecayTau);
       if (tab === 'rise' && D.plotRise.offsetParent) Plotly.Plots.resize(D.plotRise);
       if (tab === 'tg' && D.plotTg.offsetParent) {
         Plotly.Plots.resize(D.plotTgPeak);
@@ -1585,6 +1594,7 @@ async function runAnalysis() {
     addback_end_frame: +D.addbackEndFrame.value,
     addback_baseline_frames: +D.addbackBaselineFrames.value,
     addback_slope_frames: +D.addbackSlopeFrames.value,
+    compute_decay_tau: D.computeDecayTau.checked,
   };
 
   try {
@@ -1597,22 +1607,26 @@ async function runAnalysis() {
     S.timeAxis = res.time_axis;
     S.traces   = res.traces;
     S.deltaF   = res.delta_f;
+    // Return null for missing or empty-object API fields so tab visibility checks work correctly
+    const nonEmpty = o => (o && typeof o === 'object' && Object.keys(o).length > 0) ? o : null;
     S.bgTrace  = Array.isArray(res.bg_trace) && res.bg_trace.length ? res.bg_trace : null;
-    S.peaks    = res.peaks || null;
-    S.aucs     = res.aucs || null;
-    S.durations = res.durations || null;
-    S.frequencies = res.frequencies || null;
-    S.latencies = res.latencies || null;
-    S.decays = res.decays || null;
-    S.riseRates = res.rise_rates || null;
-    S.eventTimes = res.event_times || null;
-    S.tgPeaks = res.tg_peaks || null;
-    S.tgSlopes = res.tg_slopes || null;
-    S.tgAucs = res.tg_aucs || null;
-    S.addbackPeaks = res.addback_peaks || null;
-    S.addbackSlopes = res.addback_slopes || null;
-    S.addbackAucs = res.addback_aucs || null;
-    S.addbackLatencies = res.addback_latencies || null;
+    S.peaks    = nonEmpty(res.peaks);
+    S.aucs     = nonEmpty(res.aucs);
+    S.durations = nonEmpty(res.durations);
+    S.frequencies = nonEmpty(res.frequencies);
+    S.riseTimes = nonEmpty(res.rise_times);
+    S.timeToPeaks = nonEmpty(res.time_to_peaks);
+    S.decays = nonEmpty(res.decays);
+    S.decayTaus = nonEmpty(res.decay_taus);
+    S.riseRates = nonEmpty(res.rise_rates);
+    S.eventTimes = nonEmpty(res.event_times);
+    S.tgPeaks = nonEmpty(res.tg_peaks);
+    S.tgSlopes = nonEmpty(res.tg_slopes);
+    S.tgAucs = nonEmpty(res.tg_aucs);
+    S.addbackPeaks = nonEmpty(res.addback_peaks);
+    S.addbackSlopes = nonEmpty(res.addback_slopes);
+    S.addbackAucs = nonEmpty(res.addback_aucs);
+    S.addbackLatencies = nonEmpty(res.addback_latencies);
     // S.analysisMode is not overwritten here — it reflects the user's dropdown
     // selection and was already sent to the backend. Overwriting it from the
     // response was causing the dropdown and state to drift out of sync.
@@ -1639,7 +1653,9 @@ async function runAnalysis() {
       renderDurations();
       renderFrequencies();
       renderLatencies();
+      renderTimeToPeaks();
       renderDecays();
+      renderDecayTaus();
       renderRiseRates();
       renderTgMetrics();
       renderAddbackMetrics();
@@ -1732,15 +1748,6 @@ function currentGraphTime() {
     return null;
   }
   const frame = Math.max(0, Math.min(file.frame, file.metadata.time_axis.length - 1));
-  return file.metadata.time_axis[frame];
-}
-
-function analysisMarkerTime(frameValue) {
-  const file = measureFile().metadata ? measureFile() : currentFile();
-  if (!file.metadata || !Array.isArray(file.metadata.time_axis) || file.metadata.time_axis.length === 0) {
-    return null;
-  }
-  const frame = Math.max(0, Math.min(+frameValue || 0, file.metadata.time_axis.length - 1));
   return file.metadata.time_axis[frame];
 }
 
@@ -2296,8 +2303,8 @@ function renderFrequencies() {
 }
 
 function renderLatencies() {
-  if (!S.latencies) return;
-  const { selected, latencies } = S;
+  if (!S.riseTimes) return;
+  const { selected, riseTimes } = S;
   const rois = analysisRois();
   const colorMap = Object.fromEntries(rois.map(r => [r.id, r.color]));
   const ids = rois.map(r => r.id).filter(id => selected.has(id));
@@ -2309,7 +2316,7 @@ function renderLatencies() {
       [{
       type: 'box',
       x: Array(ids.length).fill(''),
-      y: ids.map(id => latencies[id] ?? null),
+      y: ids.map(id => riseTimes[id] ?? null),
       text: labels,
       boxpoints: 'all',
       jitter: 0.45,
@@ -2322,7 +2329,7 @@ function renderLatencies() {
         opacity: 0.95,
         line: { color: '#1f2937', width: 0.8 },
       },
-      hovertemplate: `<b>%{text}</b><br>Time to peak (s): %{y:.4f}<extra></extra>`,
+      hovertemplate: `<b>%{text}</b><br>Rise time (10%-to-peak, s): %{y:.4f}<extra></extra>`,
     }],
     {
       paper_bgcolor: '#1f2937',
@@ -2331,9 +2338,53 @@ function renderLatencies() {
       height: 218,
       margin: { t: 28, b: 24, l: 58, r: 8 },
       xaxis: { visible: false },
-      yaxis: { gridcolor: '#374151', color: '#9ca3af', title: 'Time to peak (s)' },
+      yaxis: { gridcolor: '#374151', color: '#9ca3af', title: 'Rise time (10%-to-peak, s)' },
       showlegend: false,
-      title: { text: 'Mean Time To Peak', font: { size: 11, color: '#f3f4f6' } },
+      title: { text: 'Mean Rise Time (10%-to-peak)', font: { size: 11, color: '#f3f4f6' } },
+    },
+    PLOTLY_CONFIG,
+  );
+}
+
+function renderTimeToPeaks() {
+  if (!S.timeToPeaks) return;
+  const { selected, timeToPeaks } = S;
+  const rois = analysisRois();
+  const colorMap = Object.fromEntries(rois.map(r => [r.id, r.color]));
+  const ids = rois.map(r => r.id).filter(id => selected.has(id));
+  const labels = ids.map(id => `ROI ${id}`);
+  const colors = ids.map(id => colorMap[id] || '#ccc');
+
+  Plotly.react(
+      D.plotTimepeak,
+      [{
+      type: 'box',
+      x: Array(ids.length).fill(''),
+      y: ids.map(id => timeToPeaks[id] ?? null),
+      text: labels,
+      boxpoints: 'all',
+      jitter: 0.45,
+      pointpos: 0,
+      fillcolor: 'rgba(56,189,248,0.28)',
+      line: { color: '#38bdf8', width: 1.3 },
+      marker: {
+        color: colors,
+        size: 6,
+        opacity: 0.95,
+        line: { color: '#1f2937', width: 0.8 },
+      },
+      hovertemplate: `<b>%{text}</b><br>Time to peak (window start, s): %{y:.4f}<extra></extra>`,
+    }],
+    {
+      paper_bgcolor: '#1f2937',
+      plot_bgcolor: '#111827',
+      font: { color: '#f3f4f6', size: 10 },
+      height: 218,
+      margin: { t: 28, b: 24, l: 58, r: 8 },
+      xaxis: { visible: false },
+      yaxis: { gridcolor: '#374151', color: '#9ca3af', title: 'Time to peak (window start, s)' },
+      showlegend: false,
+      title: { text: 'Mean Time To Peak (Window Start)', font: { size: 11, color: '#f3f4f6' } },
     },
     PLOTLY_CONFIG,
   );
@@ -2378,6 +2429,50 @@ function renderDecays() {
       yaxis: { gridcolor: '#374151', color: '#9ca3af', title: 'Decay t1/2 (s)' },
       showlegend: false,
       title: { text: 'Mean Decay Half-Time', font: { size: 11, color: '#f3f4f6' } },
+    },
+    PLOTLY_CONFIG,
+  );
+}
+
+function renderDecayTaus() {
+  if (!S.decayTaus) return;
+  const { selected, decayTaus } = S;
+  const rois = analysisRois();
+  const colorMap = Object.fromEntries(rois.map(r => [r.id, r.color]));
+  const ids = rois.map(r => r.id).filter(id => selected.has(id));
+  const labels = ids.map(id => `ROI ${id}`);
+  const colors = ids.map(id => colorMap[id] || '#ccc');
+
+  Plotly.react(
+    D.plotDecayTau,
+    [{
+      type: 'box',
+      x: Array(ids.length).fill(''),
+      y: ids.map(id => decayTaus[id] ?? null),
+      text: labels,
+      boxpoints: 'all',
+      jitter: 0.45,
+      pointpos: 0,
+      fillcolor: 'rgba(167,139,250,0.28)',
+      line: { color: '#a78bfa', width: 1.3 },
+      marker: {
+        color: colors,
+        size: 6,
+        opacity: 0.95,
+        line: { color: '#1f2937', width: 0.8 },
+      },
+      hovertemplate: `<b>%{text}</b><br>Decay tau (s): %{y:.4f}<extra></extra>`,
+    }],
+    {
+      paper_bgcolor: '#1f2937',
+      plot_bgcolor: '#111827',
+      font: { color: '#f3f4f6', size: 10 },
+      height: 218,
+      margin: { t: 28, b: 24, l: 58, r: 8 },
+      xaxis: { visible: false },
+      yaxis: { gridcolor: '#374151', color: '#9ca3af', title: 'Decay tau (s)' },
+      showlegend: false,
+      title: { text: 'Mean Decay Tau (fitted)', font: { size: 11, color: '#f3f4f6' } },
     },
     PLOTLY_CONFIG,
   );
@@ -2566,8 +2661,10 @@ function clearAnalysisState({ preserveRaw = false } = {}) {
   S.aucs = null;
   S.durations = null;
   S.frequencies = null;
-  S.latencies = null;
+  S.riseTimes = null;
+  S.timeToPeaks = null;
   S.decays = null;
+  S.decayTaus = null;
   S.riseRates = null;
   S.eventTimes = null;
   S.tgPeaks = null;
@@ -2585,10 +2682,25 @@ function syncAnalysisUI() {
   updateAssayValidationHints();
   D.plotsSection.style.display = hasRaw ? 'flex' : 'none';
   D.exportRow.style.display = hasFull ? 'flex' : 'none';
-  [D.tabDelta, D.tabSummary, D.tabDuration, D.tabFrequency, D.tabLatency, D.tabDecay, D.tabRise, D.tabTg, D.tabAddback].forEach(btn => {
-    btn.style.display = hasFull ? '' : 'none';
-  });
+  const show = (btn, condition) => { btn.style.display = condition ? '' : 'none'; };
+  show(D.tabDelta,    hasFull);
+  show(D.tabSummary,  !!(S.peaks && S.aucs));
+  show(D.tabDuration, !!S.durations);
+  show(D.tabFrequency,!!S.frequencies);
+  show(D.tabLatency,  !!S.riseTimes);
+  show(D.tabTimepeak, !!S.timeToPeaks);
+  show(D.tabDecay,    !!S.decays);
+  show(D.tabDecayTau, !!S.decayTaus);
+  show(D.tabRise,     !!S.riseRates);
+  show(D.tabTg,       !!(S.tgPeaks && S.tgSlopes && S.tgAucs));
+  show(D.tabAddback,  !!(S.addbackPeaks && S.addbackSlopes && S.addbackAucs));
   if (!hasFull && hasRaw) activatePlotTab('raw');
+
+  // if the currently active tab is now hidden, fall back to delta
+  const activeBtn = [...D.tabBtns].find(b => b.classList.contains('active'));
+  if (activeBtn && activeBtn.style.display === 'none') {
+    activatePlotTab(hasFull ? 'delta' : 'raw');
+  }
 }
 
 function cleanupFileSession(fileId, opts = {}) {

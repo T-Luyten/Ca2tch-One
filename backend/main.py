@@ -3,6 +3,7 @@ import csv
 import io
 import json
 import os
+import sys
 import tempfile
 import time
 import uuid
@@ -14,12 +15,16 @@ from xml.sax.saxutils import escape
 
 import psutil
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from PIL import ImageDraw
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+from scipy import ndimage
 from skimage import measure
 
 from analysis import (
@@ -51,6 +56,9 @@ SESSION_SWEEP_INTERVAL = 5 * 60     # sweep every 5 minutes
 _max_rss_mb = int(os.environ.get('CACELLFIE_MAX_RSS_MB', '1500'))
 MAX_PROCESS_RSS_BYTES = _max_rss_mb * 1024 * 1024 if _max_rss_mb > 0 else None
 
+# Maximum file upload size (700 MB)
+MAX_FILE_SIZE_BYTES = 700 * 1024 * 1024
+
 
 async def _evict_stale_sessions():
     while True:
@@ -69,6 +77,10 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Ca2+ cell-fie", lifespan=lifespan)
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, lambda request, exc: HTTPException(429, "Too many requests. Please try again later."))
 
 app.add_middleware(
     CORSMiddleware,
@@ -95,6 +107,62 @@ class DetectParams(BaseModel):
     allow_edge_rois: bool = False
     exclude_mask: Optional[List[List[int]]] = None  # [[y,x], ...]
 
+    @field_validator('projection_type')
+    @classmethod
+    def validate_projection_type(cls, v):
+        if v not in ('mean', 'max', 'std'):
+            raise ValueError("projection_type must be 'mean', 'max', or 'std'")
+        return v
+
+    @field_validator('min_size')
+    @classmethod
+    def validate_min_size(cls, v):
+        if v <= 0:
+            raise ValueError("min_size must be positive")
+        return v
+
+    @field_validator('max_size')
+    @classmethod
+    def validate_max_size(cls, v):
+        if v <= 0:
+            raise ValueError("max_size must be positive")
+        return v
+
+    @field_validator('threshold_adjust')
+    @classmethod
+    def validate_threshold_adjust(cls, v):
+        if v <= 0:
+            raise ValueError("threshold_adjust must be positive")
+        return v
+
+    @field_validator('smooth_sigma')
+    @classmethod
+    def validate_smooth_sigma(cls, v):
+        if v < 0:
+            raise ValueError("smooth_sigma must be non-negative")
+        return v
+
+    @field_validator('background_radius')
+    @classmethod
+    def validate_background_radius(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("background_radius must be positive")
+        return v
+
+    @field_validator('seed_sigma')
+    @classmethod
+    def validate_seed_sigma(cls, v):
+        if v <= 0:
+            raise ValueError("seed_sigma must be positive")
+        return v
+
+    @field_validator('max_size', mode='after')
+    @classmethod
+    def validate_size_range(cls, v, info):
+        if 'data' in info.data and info.data.get('min_size') and v < info.data['min_size']:
+            raise ValueError("max_size must be >= min_size")
+        return v
+
 
 class AnalyzeParams(BaseModel):
     channel: int = 0
@@ -118,6 +186,63 @@ class AnalyzeParams(BaseModel):
     addback_end_frame: int = 0
     addback_baseline_frames: int = 5
     addback_slope_frames: int = 5
+    compute_decay_tau: bool = False
+
+    @field_validator('channel')
+    @classmethod
+    def validate_channel(cls, v):
+        if v < 0:
+            raise ValueError("channel must be non-negative")
+        return v
+
+    @field_validator('baseline_start', 'baseline_end', 'auc_start', 'auc_end', 'tg_frame', 'tg_end_frame', 'addback_frame', 'addback_end_frame')
+    @classmethod
+    def validate_frame_indices(cls, v):
+        if v < 0:
+            raise ValueError("frame indices must be non-negative")
+        return v
+
+    @field_validator('bg_mode')
+    @classmethod
+    def validate_bg_mode(cls, v):
+        if v not in ('none', 'auto', 'manual'):
+            raise ValueError("bg_mode must be 'none', 'auto', or 'manual'")
+        return v
+
+    @field_validator('bg_percentile')
+    @classmethod
+    def validate_bg_percentile(cls, v):
+        if not (0 <= v <= 100):
+            raise ValueError("bg_percentile must be between 0 and 100")
+        return v
+
+    @field_validator('photobleach_mode')
+    @classmethod
+    def validate_photobleach_mode(cls, v):
+        if v not in ('none', 'linear', 'single_exp'):
+            raise ValueError("photobleach_mode must be 'none', 'linear', or 'single_exp'")
+        return v
+
+    @field_validator('analysis_mode')
+    @classmethod
+    def validate_analysis_mode(cls, v):
+        if v not in ('single', 'ratio'):
+            raise ValueError("analysis_mode must be 'single' or 'ratio'")
+        return v
+
+    @field_validator('ratio_ch_num', 'ratio_ch_den')
+    @classmethod
+    def validate_ratio_channels(cls, v):
+        if v < 0:
+            raise ValueError("channel indices must be non-negative")
+        return v
+
+    @field_validator('tg_baseline_frames', 'tg_slope_frames', 'addback_baseline_frames', 'addback_slope_frames')
+    @classmethod
+    def validate_frame_counts(cls, v):
+        if v < 0:
+            raise ValueError("frame counts must be non-negative")
+        return v
 
 
 class TransferRoisParams(BaseModel):
@@ -136,9 +261,18 @@ class MergeRoisParams(BaseModel):
 # ── API routes ────────────────────────────────────────────────────────────────
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+@limiter.limit("100/hour")
+async def upload_file(request: Request, file: UploadFile = File(...)):
     if not (file.filename or '').lower().endswith('.nd2'):
         raise HTTPException(400, "Only .nd2 files are supported")
+
+    if file.size is not None and file.size > MAX_FILE_SIZE_BYTES:
+        size_mb = file.size // (1024 * 1024)
+        limit_mb = MAX_FILE_SIZE_BYTES // (1024 * 1024)
+        raise HTTPException(
+            413,
+            f"File too large ({size_mb} MB). Maximum allowed size is {limit_mb} MB."
+        )
 
     if MAX_PROCESS_RSS_BYTES is not None:
         rss = psutil.Process().memory_info().rss
@@ -151,14 +285,23 @@ async def upload_file(file: UploadFile = File(...)):
                 "Close an open session or ask the administrator to raise CACELLFIE_MAX_RSS_MB."
             )
 
+    file_content = await file.read()
+    if len(file_content) > MAX_FILE_SIZE_BYTES:
+        size_mb = len(file_content) // (1024 * 1024)
+        limit_mb = MAX_FILE_SIZE_BYTES // (1024 * 1024)
+        raise HTTPException(
+            413,
+            f"File too large ({size_mb} MB). Maximum allowed size is {limit_mb} MB."
+        )
+
     with tempfile.NamedTemporaryFile(suffix='.nd2', delete=False) as tmp:
-        tmp.write(await file.read())
+        tmp.write(file_content)
         tmp_path = tmp.name
 
     try:
         data, metadata = load_nd2_file(tmp_path)
     except Exception as exc:
-        raise HTTPException(500, f"Failed to read ND2 file: {exc}") from exc
+        raise HTTPException(500, "Failed to read file. Please ensure the file is a valid ND2 format.") from exc
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
@@ -191,8 +334,10 @@ async def upload_file(file: UploadFile = File(...)):
         'aucs': None,
         'durations': None,
         'frequencies': None,
-        'latencies': None,
+        'rise_times': None,
+        'time_to_peaks': None,
         'decays': None,
+        'decay_taus': None,
         'rise_rates': None,
         'event_times': None,
         'tg_peaks': None,
@@ -224,6 +369,9 @@ async def get_frame(
     cmax: Optional[float] = None,
     colormap: str = Query('green'),
 ):
+    if mode not in ('channel', 'ratio'):
+        raise HTTPException(400, "mode must be 'channel' or 'ratio'")
+
     sess = _get_session(file_id)
     data = sess['data']
     meta = sess['metadata']
@@ -267,6 +415,11 @@ async def get_projection_image(
     cmax: Optional[float] = None,
     colormap: str = Query('green'),
 ):
+    if type not in ('mean', 'max', 'min', 'std'):
+        raise HTTPException(400, "type must be 'mean', 'max', 'min', or 'std'")
+    if mode not in ('channel', 'ratio'):
+        raise HTTPException(400, "mode must be 'channel' or 'ratio'")
+
     sess = _get_session(file_id)
     meta = sess['metadata']
     channel = int(np.clip(channel, 0, meta['n_channels'] - 1))
@@ -302,6 +455,13 @@ async def get_contrast(
     p_low: float = Query(1.0),
     p_high: float = Query(99.5),
 ):
+    if not (0 <= p_low <= 100):
+        raise HTTPException(400, "p_low must be between 0 and 100")
+    if not (0 <= p_high <= 100):
+        raise HTTPException(400, "p_high must be between 0 and 100")
+    if p_low > p_high:
+        raise HTTPException(400, "p_low must be <= p_high")
+
     sess = _get_session(file_id)
     meta = sess['metadata']
     channel = int(np.clip(channel, 0, meta['n_channels'] - 1))
@@ -324,7 +484,8 @@ async def get_contrast(
 
 
 @app.post("/api/detect/{file_id}")
-async def detect(file_id: str, params: DetectParams):
+@limiter.limit("500/hour")
+async def detect(request: Request, file_id: str, params: DetectParams):
     sess = _get_session(file_id)
     data = sess['data']
 
@@ -351,8 +512,10 @@ async def detect(file_id: str, params: DetectParams):
             allow_edge_rois=params.allow_edge_rois,
             exclude_mask=exclude,
         )
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(500, f"Detection failed: {exc}") from exc
+        raise HTTPException(500, "Detection failed. Please try with different parameters.") from exc
 
     sess['labels'] = labels
     sess['traces'] = None
@@ -434,6 +597,13 @@ async def merge_rois(file_id: str, params: MergeRoisParams):
     keep_id = min(roi_ids)
     remove_id = max(roi_ids)
     labels = sess['labels']
+
+    mask_keep = labels == keep_id
+    mask_remove = labels == remove_id
+    dilated_keep = ndimage.binary_dilation(mask_keep)
+    if not (dilated_keep & mask_remove).any():
+        raise HTTPException(400, "ROIs must be touching to merge. The selected ROIs are not adjacent.")
+
     labels[labels == remove_id] = keep_id
 
     merged_regions = [r for r in measure.regionprops(labels) if r.label == keep_id]
@@ -485,8 +655,10 @@ async def transfer_rois(params: TransferRoisParams):
     target['bg_trace'] = None
     target['durations'] = None
     target['frequencies'] = None
-    target['latencies'] = None
+    target['rise_times'] = None
+    target['time_to_peaks'] = None
     target['decays'] = None
+    target['decay_taus'] = None
     target['event_times'] = None
     target['peaks'] = None
     target['aucs'] = None
@@ -506,7 +678,8 @@ async def transfer_rois(params: TransferRoisParams):
 
 
 @app.post("/api/analyze/{file_id}")
-async def analyze(file_id: str, params: AnalyzeParams):
+@limiter.limit("500/hour")
+async def analyze(request: Request, file_id: str, params: AnalyzeParams):
     sess = _get_session(file_id)
     if sess['labels'] is None:
         raise HTTPException(400, "Run detection first")
@@ -562,13 +735,14 @@ async def analyze(file_id: str, params: AnalyzeParams):
             baseline_start=params.baseline_start,
             baseline_end=params.baseline_end,
         )
-        peaks, aucs, durations, frequencies, latencies, decays, rise_rates, event_times = compute_summary_metrics(
+        peaks, aucs, durations, frequencies, rise_times, time_to_peaks, decays, decay_taus, rise_rates, event_times = compute_summary_metrics(
             delta_f,
             sess['metadata']['time_axis'],
             baseline_start=params.baseline_start,
             baseline_end=params.baseline_end,
             auc_start=params.auc_start,
             auc_end=params.auc_end,
+            compute_decay_tau=params.compute_decay_tau,
         )
         tg_peaks, tg_slopes, tg_aucs, addback_peaks, addback_slopes, addback_aucs, addback_latencies = compute_addback_metrics(
             delta_f,
@@ -585,7 +759,7 @@ async def analyze(file_id: str, params: AnalyzeParams):
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(500, f"Analysis failed: {exc}") from exc
+        raise HTTPException(500, "Analysis failed. Please try with different parameters.") from exc
 
     sess['traces'] = traces
     sess['delta_f'] = delta_f
@@ -595,8 +769,10 @@ async def analyze(file_id: str, params: AnalyzeParams):
     sess['aucs'] = aucs
     sess['durations'] = durations
     sess['frequencies'] = frequencies
-    sess['latencies'] = latencies
+    sess['rise_times'] = rise_times
+    sess['time_to_peaks'] = time_to_peaks
     sess['decays'] = decays
+    sess['decay_taus'] = decay_taus
     sess['rise_rates'] = rise_rates
     sess['event_times'] = event_times
     sess['tg_peaks'] = tg_peaks
@@ -619,22 +795,27 @@ async def analyze(file_id: str, params: AnalyzeParams):
         'aucs':          {str(k): v for k, v in aucs.items()},
         'durations':     {str(k): v for k, v in durations.items()},
         'frequencies':   {str(k): v for k, v in frequencies.items()},
-        'latencies':     {str(k): v for k, v in latencies.items()},
+        'rise_times':    {str(k): v for k, v in rise_times.items()},
+        'time_to_peaks': {str(k): v for k, v in time_to_peaks.items()},
         'decays':        {str(k): v for k, v in decays.items()},
+        'decay_taus':    {str(k): v for k, v in decay_taus.items()} if decay_taus is not None else None,
         'rise_rates':    {str(k): v for k, v in rise_rates.items()},
         'event_times':   {str(k): v for k, v in event_times.items()},
-        'tg_peaks':      {str(k): v for k, v in tg_peaks.items()},
-        'tg_slopes':     {str(k): v for k, v in tg_slopes.items()},
-        'tg_aucs':       {str(k): v for k, v in tg_aucs.items()},
-        'addback_peaks': {str(k): v for k, v in addback_peaks.items()},
-        'addback_slopes': {str(k): v for k, v in addback_slopes.items()},
-        'addback_aucs':  {str(k): v for k, v in addback_aucs.items()},
-        'addback_latencies': {str(k): v for k, v in addback_latencies.items()},
+        'tg_peaks':      {str(k): v for k, v in tg_peaks.items()} if tg_peaks is not None else None,
+        'tg_slopes':     {str(k): v for k, v in tg_slopes.items()} if tg_slopes is not None else None,
+        'tg_aucs':       {str(k): v for k, v in tg_aucs.items()} if tg_aucs is not None else None,
+        'addback_peaks': {str(k): v for k, v in addback_peaks.items()} if addback_peaks is not None else None,
+        'addback_slopes': {str(k): v for k, v in addback_slopes.items()} if addback_slopes is not None else None,
+        'addback_aucs':  {str(k): v for k, v in addback_aucs.items()} if addback_aucs is not None else None,
+        'addback_latencies': {str(k): v for k, v in addback_latencies.items()} if addback_latencies is not None else None,
     }
 
 
 @app.get("/api/export/{file_id}")
 async def export_csv(file_id: str, type: str = Query('raw')):
+    if type not in ('raw', 'delta_f'):
+        raise HTTPException(400, "type must be 'raw' or 'delta_f'")
+
     sess = _get_session(file_id)
     data_map = sess['traces'] if type == 'raw' else sess['delta_f']
     if data_map is None:
@@ -649,7 +830,9 @@ async def export_csv(file_id: str, type: str = Query('raw')):
     for i, t in enumerate(time_axis):
         writer.writerow([f'{t:.4f}'] + [f'{data_map[rid][i]:.4f}' for rid in roi_ids])
 
-    fname = f'calcium_{"raw" if type == "raw" else "deltaF"}.csv'
+    stem = os.path.splitext(sess.get('file_name') or 'calcium')[0]
+    suffix = 'raw_analysis' if type == 'raw' else 'deltaF'
+    fname = f'{stem}_{suffix}.csv'
     return Response(
         content=out.getvalue(),
         media_type='text/csv',
@@ -687,6 +870,13 @@ async def export_overlay_image(
     cmax: Optional[float] = None,
     colormap: str = Query('green'),
 ):
+    if view not in ('frame', 'projection'):
+        raise HTTPException(400, "view must be 'frame' or 'projection'")
+    if proj_type not in ('mean', 'max', 'min', 'std'):
+        raise HTTPException(400, "proj_type must be 'mean', 'max', 'min', or 'std'")
+    if mode not in ('channel', 'ratio'):
+        raise HTTPException(400, "mode must be 'channel' or 'ratio'")
+
     sess = _get_session(file_id)
     if not sess['rois']:
         raise HTTPException(400, "No ROIs available to overlay")
@@ -743,6 +933,17 @@ async def export_overlay_image(
     )
 
 
+def _get_object_size(obj) -> int:
+    """Get size in bytes of an object (NumPy array or Python list)."""
+    if obj is None:
+        return 0
+    if hasattr(obj, 'nbytes'):
+        return int(obj.nbytes)
+    if isinstance(obj, list):
+        return sum(sys.getsizeof(item) for item in obj)
+    return 0
+
+
 @app.get("/api/memory")
 async def memory_stats():
     proc = psutil.Process()
@@ -752,9 +953,9 @@ async def memory_stats():
         s['data'].nbytes for s in sessions.values() if s.get('data') is not None
     )
     session_other_bytes = sum(
-        (s['labels'].nbytes if s.get('labels') is not None else 0) +
-        sum(v.nbytes for v in (s.get('traces') or {}).values()) +
-        sum(v.nbytes for v in (s.get('delta_f') or {}).values())
+        _get_object_size(s.get('labels')) +
+        sum(_get_object_size(v) for v in (s.get('traces') or {}).values()) +
+        sum(_get_object_size(v) for v in (s.get('delta_f') or {}).values())
         for s in sessions.values()
     )
 
@@ -791,8 +992,10 @@ def _clear_analysis_results(sess: dict):
     sess['aucs'] = None
     sess['durations'] = None
     sess['frequencies'] = None
-    sess['latencies'] = None
+    sess['rise_times'] = None
+    sess['time_to_peaks'] = None
     sess['decays'] = None
+    sess['decay_taus'] = None
     sess['rise_rates'] = None
     sess['event_times'] = None
     sess['tg_peaks'] = None
@@ -979,28 +1182,33 @@ def _build_analysis_workbook(sess):
 
     metric_rows = [[
         'roi_id', 'peak', 'auc', 'event_fwhm', 'event_frequency',
-        'time_to_peak', 'decay_t_half', 'rate_of_rise',
+        'rise_time_10pct_to_peak', 'time_to_peak_window_start', 'decay_t_half', 'decay_tau', 'rate_of_rise',
         'tg_peak', 'tg_slope', 'tg_auc',
         'addback_peak', 'addback_slope', 'addback_auc', 'addback_latency',
         'event_times_s',
     ]]
+    def _sget(d, key, default=''):
+        return d.get(key, default) if d is not None else default
+
     for rid in roi_ids:
         metric_rows.append([
             rid,
-            sess['peaks'].get(rid, ''),
-            sess['aucs'].get(rid, ''),
-            sess['durations'].get(rid, ''),
-            sess['frequencies'].get(rid, ''),
-            sess['latencies'].get(rid, ''),
-            sess['decays'].get(rid, ''),
-            sess['rise_rates'].get(rid, ''),
-            sess['tg_peaks'].get(rid, ''),
-            sess['tg_slopes'].get(rid, ''),
-            sess['tg_aucs'].get(rid, ''),
-            sess['addback_peaks'].get(rid, ''),
-            sess['addback_slopes'].get(rid, ''),
-            sess['addback_aucs'].get(rid, ''),
-            sess['addback_latencies'].get(rid, ''),
+            _sget(sess['peaks'], rid),
+            _sget(sess['aucs'], rid),
+            _sget(sess['durations'], rid),
+            _sget(sess['frequencies'], rid),
+            _sget(sess['rise_times'], rid),
+            _sget(sess['time_to_peaks'], rid),
+            _sget(sess['decays'], rid),
+            _sget(sess['decay_taus'], rid),
+            _sget(sess['rise_rates'], rid),
+            _sget(sess['tg_peaks'], rid),
+            _sget(sess['tg_slopes'], rid),
+            _sget(sess['tg_aucs'], rid),
+            _sget(sess['addback_peaks'], rid),
+            _sget(sess['addback_slopes'], rid),
+            _sget(sess['addback_aucs'], rid),
+            _sget(sess['addback_latencies'], rid),
             sess['event_times'].get(rid, []),
         ])
 

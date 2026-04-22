@@ -11,6 +11,7 @@
   <div id="splash-screen">
     <img src="CatchOne.png" alt="Ca2+tch-One" id="splash-logo">
   </div>
+
   <div id="upload-bar"><div id="upload-bar-fill"></div></div>
   <div id="header">
     <img id="logo" src="CatchOne.png" alt="logo" style="height:50px;width:auto">
@@ -139,16 +140,6 @@
         </div>
 
         <div class="param-row">
-          <span class="param-label">Min size (px²)</span>
-          <input type="number" id="min-size" value="100" min="4" max="100000">
-        </div>
-
-        <div class="param-row">
-          <span class="param-label">Max size (px²)</span>
-          <input type="number" id="max-size" value="10000" min="10">
-        </div>
-
-        <div class="param-row">
           <span class="param-label">Threshold adj.</span>
           <input type="range" id="thresh-adj" min="0.2" max="3.0" step="0.05" value="1.0">
           <span class="param-value" id="thresh-adj-val">1.00</span>
@@ -169,6 +160,16 @@
           <span class="param-label">Seed σ (px)</span>
           <input type="range" id="seed-sigma" min="0.2" max="4.0" step="0.1" value="1.0">
           <span class="param-value" id="seed-sigma-val">1.0</span>
+        </div>
+
+        <div class="param-row">
+          <span class="param-label">Min size (px²)</span>
+          <input type="number" id="min-size" value="100" min="4" max="100000">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label">Max size (px²)</span>
+          <input type="number" id="max-size" value="10000" min="10">
         </div>
 
         <div class="param-row">
@@ -277,6 +278,11 @@
         </div>
 
         <div class="param-row">
+          <span class="param-label">Compute decay tau</span>
+          <input type="checkbox" id="compute-decay-tau">
+        </div>
+
+        <div class="param-row">
           <span class="param-label">Photobleach</span>
           <select id="photobleach-mode">
             <option value="none" selected>None</option>
@@ -352,8 +358,10 @@
       <button class="tab-btn" data-tab="summary" id="tab-summary">Peak + AUC</button>
       <button class="tab-btn" data-tab="duration" id="tab-duration">Event FWHM</button>
       <button class="tab-btn" data-tab="frequency" id="tab-frequency">Event Raster</button>
-      <button class="tab-btn" data-tab="latency" id="tab-latency">Time To Peak</button>
+      <button class="tab-btn" data-tab="latency" id="tab-latency">Rise Time</button>
+      <button class="tab-btn" data-tab="timepeak" id="tab-timepeak">Time To Peak</button>
       <button class="tab-btn" data-tab="decay" id="tab-decay">Decay t1/2</button>
+      <button class="tab-btn" data-tab="decay-tau" id="tab-decay-tau">Decay tau</button>
       <button class="tab-btn" data-tab="rise" id="tab-rise">Rate Of Rise</button>
       <button class="tab-btn" data-tab="tg" id="tab-tg">TG Leak</button>
       <button class="tab-btn" data-tab="addback" id="tab-addback">Ca Add-Back</button>
@@ -379,7 +387,9 @@
       <div id="plot-frequency-chart"></div>
     </div>
     <div id="plot-latency" class="plot-pane" style="display:none"></div>
+    <div id="plot-timepeak" class="plot-pane" style="display:none"></div>
     <div id="plot-decay" class="plot-pane" style="display:none"></div>
+    <div id="plot-decay-tau" class="plot-pane" style="display:none"></div>
     <div id="plot-rise" class="plot-pane" style="display:none"></div>
     <div id="plot-tg" class="plot-pane assay-pane" style="display:none">
       <div id="plot-tg-peak"></div>

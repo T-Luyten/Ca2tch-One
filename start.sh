@@ -27,8 +27,8 @@ pip install -q --upgrade pip
 pip install -q -r requirements.txt
 
 echo ""
-echo "  Starting Flux Ca2+pacitor"
+echo "  Starting Ca2+tch-One"
 echo "  Open http://localhost:8001 in your browser"
 echo ""
 
-uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+uvicorn main:app --host 127.0.0.1 --port 8001 --reload

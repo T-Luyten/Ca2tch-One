@@ -32,7 +32,7 @@ def _exclusion_mask(labels):
     """
     cell_mask = labels > 0
     if cell_mask.any():
-        return morph.binary_dilation(cell_mask, morph.disk(_CELL_MARGIN_PX))
+        return morph.dilation(cell_mask, morph.disk(_CELL_MARGIN_PX))
     return cell_mask
 
 
@@ -352,6 +352,65 @@ def _event_onset_time(window, x, peak_idx, baseline_level, onset_fraction=0.1):
     return float('nan')
 
 
+_TAU_FIT_FRAMES = 60  # max frames to use for decay tau fit
+
+
+def _event_decay_tau(window, x, peak_idx):
+    """Estimate decay tau from the falling phase.
+
+    Uses a log-linear fit as a fast initial estimate, then refines with a
+    bounded nonlinear least-squares fit (curve_fit) using that estimate as
+    the starting point. Falls back to the log-linear value if the refinement
+    fails or diverges.
+    """
+    peak_value = window[peak_idx]
+    if np.isnan(peak_value) or peak_value <= 0:
+        return float('nan')
+
+    end = min(peak_idx + _TAU_FIT_FRAMES, len(window))
+    tail_w = window[peak_idx:end]
+    tail_x = x[peak_idx:end]
+
+    valid = ~np.isnan(tail_w)
+    if valid.sum() < 4:
+        return float('nan')
+
+    tw = tail_w[valid]
+    tx = tail_x[valid]
+    baseline = float(np.nanmin(tw))
+    above = tw - baseline
+    positive = above > 0
+    if positive.sum() < 4:
+        return float('nan')
+
+    # log-linear estimate (fast, used as p0 for refinement)
+    try:
+        slope, _ = np.polyfit(tx[positive], np.log(above[positive]), 1)
+        tau0 = -1.0 / slope if slope < 0 and np.isfinite(slope) else None
+    except Exception:
+        tau0 = None
+
+    if tau0 is None:
+        return float('nan')
+
+    # nonlinear refinement with tight maxfev — converges quickly from a good p0
+    amplitude = float(tw[0]) - baseline
+    t0 = float(tx[0])
+    try:
+        popt, _ = curve_fit(
+            lambda t, tau, c: amplitude * np.exp(-(t - t0) / tau) + c,
+            tx,
+            tw,
+            p0=(tau0, baseline),
+            bounds=([1e-6, -np.inf], [np.inf, np.inf]),
+            maxfev=200,
+        )
+        tau = float(popt[0])
+        return tau if np.isfinite(tau) and tau > 0 else float(tau0)
+    except Exception:
+        return float(tau0)
+
+
 def _event_decay_half_time(window, x, peak_idx):
     peak_value = window[peak_idx]
     if np.isnan(peak_value) or peak_value <= 0:
@@ -381,6 +440,7 @@ def compute_summary_metrics(
     auc_start=0,
     auc_end=0,
     threshold_std_multiplier=2.0,
+    compute_decay_tau=False,
 ):
     """
     Compute peak, suprathreshold AUC, mean event FWHM, event frequency,
@@ -395,19 +455,16 @@ def compute_summary_metrics(
     aucs = {}
     durations = {}
     frequencies = {}
-    latencies = {}
+    rise_times = {}
+    time_to_peaks = {}
     decays = {}
+    decay_taus = {} if compute_decay_tau else None
     rise_rates = {}
     event_times = {}
 
-    if not auc_end or int(auc_end) <= 0:
-        start = 0
-        end = 0
-        x = t[0:0]
-    else:
-        end = min(int(auc_end), len(t))
-        start = min(max(0, int(auc_start)), max(end - 1, 0))
-        x = t[start:end]
+    end = len(t) if not auc_end or int(auc_end) <= 0 else min(int(auc_end), len(t))
+    start = min(max(0, int(auc_start)), max(end - 1, 0))
+    x = t[start:end]
 
     for roi_id, trace in traces.items():
         arr = np.array(trace, dtype=float)
@@ -422,9 +479,16 @@ def compute_summary_metrics(
         baseline = _baseline_window(arr, baseline_start, baseline_end)
         baseline = baseline[~np.isnan(baseline)]
         if baseline.size:
-            threshold = float(baseline.mean() + threshold_std_multiplier * baseline.std())
+            b_median = float(np.median(baseline))
+            # MAD scaled to be consistent with std for Gaussian data
+            mad = float(np.median(np.abs(baseline - b_median))) * 1.4826
+            mad = max(mad, 1e-9)
+            threshold = b_median + threshold_std_multiplier * mad
+            baseline_level = b_median
         else:
+            mad = 1e-9
             threshold = 0.0
+            baseline_level = 0.0
 
         suprathreshold = np.maximum(window - threshold, 0.0)
         valid_auc = ~np.isnan(suprathreshold)
@@ -434,36 +498,43 @@ def compute_summary_metrics(
         )
 
         peak_candidates = np.where(~np.isnan(window), window, -np.inf)
-        prominence = max(float(np.nanstd(baseline)) if baseline.size else 0.0, 1e-9)
+        prominence = max(mad if baseline.size else 0.0, 1e-9)
         peak_indices, _ = find_peaks(peak_candidates, height=threshold, prominence=prominence)
-        baseline_level = float(np.nanmean(baseline)) if baseline.size else 0.0
 
         event_widths = []
-        event_latencies = []
+        event_rise_times = []
+        event_time_to_peaks = []
         event_decays = []
-        valid_event_count = 0
+        event_decay_taus = []
         roi_event_times = []
         if x.size:
             for idx in peak_indices:
                 idx = int(idx)
+                event_time_to_peaks.append(float(x[idx]) - float(x[0]))
+                roi_event_times.append(float(x[idx]))
                 onset_time = _event_onset_time(window, x, idx, baseline_level=baseline_level)
                 width = _event_fwhm(window, x, idx)
                 decay = _event_decay_half_time(window, x, idx)
                 if not (np.isfinite(onset_time) and np.isfinite(width) and np.isfinite(decay)):
                     continue
-                event_latencies.append(float(x[idx]) - onset_time)
+                event_rise_times.append(float(x[idx]) - onset_time)
                 event_widths.append(width)
                 event_decays.append(decay)
-                roi_event_times.append(float(x[idx]))
-                valid_event_count += 1
+                if compute_decay_tau:
+                    tau = _event_decay_tau(window, x, idx)
+                    if np.isfinite(tau):
+                        event_decay_taus.append(float(tau))
 
         durations[roi_id] = float(np.mean(event_widths)) if event_widths else 0.0
         window_duration = float(x[-1] - x[0]) if x.size > 1 else 0.0
         frequencies[roi_id] = (
-            float(valid_event_count / window_duration) if window_duration > 0 else 0.0
+            float(len(peak_indices) / window_duration) if window_duration > 0 else 0.0
         )
-        latencies[roi_id] = float(np.mean(event_latencies)) if event_latencies else 0.0
+        rise_times[roi_id] = float(np.mean(event_rise_times)) if event_rise_times else 0.0
+        time_to_peaks[roi_id] = float(np.mean(event_time_to_peaks)) if event_time_to_peaks else 0.0
         decays[roi_id] = float(np.mean(event_decays)) if event_decays else 0.0
+        if compute_decay_tau:
+            decay_taus[roi_id] = float(np.mean(event_decay_taus)) if event_decay_taus else 0.0
         event_times[roi_id] = roi_event_times
 
         if window.size < 2 or x.size < 2:
@@ -480,7 +551,7 @@ def compute_summary_metrics(
         slopes = np.diff(window)[good] / dt[good]
         rise_rates[roi_id] = float(np.nanmax(slopes)) if slopes.size else 0.0
 
-    return peaks, aucs, durations, frequencies, latencies, decays, rise_rates, event_times
+    return peaks, aucs, durations, frequencies, rise_times, time_to_peaks, decays, decay_taus, rise_rates, event_times
 
 
 def _stimulus_response_metrics(arr, t, stim_frame, end_frame, baseline_frames=5, slope_frames=5):
@@ -555,14 +626,6 @@ def compute_addback_metrics(
     addback_baseline_frames=5,
     addback_slope_frames=5,
 ):
-    tg_peaks = {}
-    tg_slopes = {}
-    tg_aucs = {}
-    addback_peaks = {}
-    addback_slopes = {}
-    addback_aucs = {}
-    addback_latencies = {}
-
     t = np.array(time_axis, dtype=float)
     tg_baseline_frames = max(1, int(tg_baseline_frames))
     tg_slope_frames = max(2, int(tg_slope_frames))
@@ -571,10 +634,24 @@ def compute_addback_metrics(
     tg_end_frame = int(tg_end_frame)
     addback_end_frame = int(addback_end_frame)
 
+    run_tg = tg_end_frame > 0
+    run_addback = addback_end_frame > 0
+
+    if not run_tg and not run_addback:
+        return None, None, None, None, None, None, None
+
+    tg_peaks = {} if run_tg else None
+    tg_slopes = {} if run_tg else None
+    tg_aucs = {} if run_tg else None
+    addback_peaks = {} if run_addback else None
+    addback_slopes = {} if run_addback else None
+    addback_aucs = {} if run_addback else None
+    addback_latencies = {} if run_addback else None
+
     for roi_id, trace in traces.items():
         arr = np.array(trace, dtype=float)
 
-        if tg_end_frame > 0:
+        if run_tg:
             tg = _stimulus_response_metrics(
                 arr, t,
                 stim_frame=int(tg_frame),
@@ -582,15 +659,11 @@ def compute_addback_metrics(
                 baseline_frames=tg_baseline_frames,
                 slope_frames=tg_slope_frames,
             )
-        else:
-            tg = {
-                'peak': 0.0,
-                'slope': 0.0,
-                'auc': 0.0,
-                'time_to_peak': 0.0,
-            }
+            tg_peaks[roi_id] = tg['peak']
+            tg_slopes[roi_id] = tg['slope']
+            tg_aucs[roi_id] = tg['auc']
 
-        if addback_end_frame > 0:
+        if run_addback:
             addback = _stimulus_response_metrics(
                 arr, t,
                 stim_frame=int(addback_frame),
@@ -598,21 +671,10 @@ def compute_addback_metrics(
                 baseline_frames=addback_baseline_frames,
                 slope_frames=addback_slope_frames,
             )
-        else:
-            addback = {
-                'peak': 0.0,
-                'slope': 0.0,
-                'auc': 0.0,
-                'time_to_peak': 0.0,
-            }
-
-        tg_peaks[roi_id] = tg['peak']
-        tg_slopes[roi_id] = tg['slope']
-        tg_aucs[roi_id] = tg['auc']
-        addback_peaks[roi_id] = addback['peak']
-        addback_slopes[roi_id] = addback['slope']
-        addback_aucs[roi_id] = addback['auc']
-        addback_latencies[roi_id] = addback['time_to_peak']
+            addback_peaks[roi_id] = addback['peak']
+            addback_slopes[roi_id] = addback['slope']
+            addback_aucs[roi_id] = addback['auc']
+            addback_latencies[roi_id] = addback['time_to_peak']
 
     return (
         tg_peaks,
