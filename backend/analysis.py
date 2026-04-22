@@ -418,9 +418,16 @@ def compute_summary_metrics(
         baseline = _baseline_window(arr, baseline_start, baseline_end)
         baseline = baseline[~np.isnan(baseline)]
         if baseline.size:
-            threshold = float(baseline.mean() + threshold_std_multiplier * baseline.std())
+            b_median = float(np.median(baseline))
+            # MAD scaled to be consistent with std for Gaussian data
+            mad = float(np.median(np.abs(baseline - b_median))) * 1.4826
+            mad = max(mad, 1e-9)
+            threshold = b_median + threshold_std_multiplier * mad
+            baseline_level = b_median
         else:
+            mad = 1e-9
             threshold = 0.0
+            baseline_level = 0.0
 
         suprathreshold = np.maximum(window - threshold, 0.0)
         valid_auc = ~np.isnan(suprathreshold)
@@ -430,9 +437,8 @@ def compute_summary_metrics(
         )
 
         peak_candidates = np.where(~np.isnan(window), window, -np.inf)
-        prominence = max(float(np.nanstd(baseline)) if baseline.size else 0.0, 1e-9)
+        prominence = max(mad if baseline.size else 0.0, 1e-9)
         peak_indices, _ = find_peaks(peak_candidates, height=threshold, prominence=prominence)
-        baseline_level = float(np.nanmean(baseline)) if baseline.size else 0.0
 
         event_widths = []
         event_rise_times = []
