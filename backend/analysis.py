@@ -32,7 +32,7 @@ def _exclusion_mask(labels):
     """
     cell_mask = labels > 0
     if cell_mask.any():
-        return morph.binary_dilation(cell_mask, morph.disk(_CELL_MARGIN_PX))
+        return morph.dilation(cell_mask, morph.disk(_CELL_MARGIN_PX))
     return cell_mask
 
 
