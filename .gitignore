@@ -4,3 +4,6 @@ __pycache__/
 *.py[cod]
 *.nd2
 .DS_Store
+.env
+backend/.env
+.codex
