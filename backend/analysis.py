@@ -438,12 +438,12 @@ def compute_summary_metrics(
         event_rise_times = []
         event_time_to_peaks = []
         event_decays = []
-        valid_event_count = 0
         roi_event_times = []
         if x.size:
             for idx in peak_indices:
                 idx = int(idx)
                 event_time_to_peaks.append(float(x[idx]) - float(x[0]))
+                roi_event_times.append(float(x[idx]))
                 onset_time = _event_onset_time(window, x, idx, baseline_level=baseline_level)
                 width = _event_fwhm(window, x, idx)
                 decay = _event_decay_half_time(window, x, idx)
@@ -452,13 +452,11 @@ def compute_summary_metrics(
                 event_rise_times.append(float(x[idx]) - onset_time)
                 event_widths.append(width)
                 event_decays.append(decay)
-                roi_event_times.append(float(x[idx]))
-                valid_event_count += 1
 
         durations[roi_id] = float(np.mean(event_widths)) if event_widths else 0.0
         window_duration = float(x[-1] - x[0]) if x.size > 1 else 0.0
         frequencies[roi_id] = (
-            float(valid_event_count / window_duration) if window_duration > 0 else 0.0
+            float(len(peak_indices) / window_duration) if window_duration > 0 else 0.0
         )
         rise_times[roi_id] = float(np.mean(event_rise_times)) if event_rise_times else 0.0
         time_to_peaks[roi_id] = float(np.mean(event_time_to_peaks)) if event_time_to_peaks else 0.0
