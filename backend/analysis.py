@@ -356,7 +356,13 @@ _TAU_FIT_FRAMES = 60  # max frames to use for decay tau fit
 
 
 def _event_decay_tau(window, x, peak_idx):
-    """Estimate decay tau via log-linear fit on the falling phase (no iteration)."""
+    """Estimate decay tau from the falling phase.
+
+    Uses a log-linear fit as a fast initial estimate, then refines with a
+    bounded nonlinear least-squares fit (curve_fit) using that estimate as
+    the starting point. Falls back to the log-linear value if the refinement
+    fails or diverges.
+    """
     peak_value = window[peak_idx]
     if np.isnan(peak_value) or peak_value <= 0:
         return float('nan')
@@ -373,18 +379,36 @@ def _event_decay_tau(window, x, peak_idx):
     tx = tail_x[valid]
     baseline = float(np.nanmin(tw))
     above = tw - baseline
-    # keep only the strictly positive, monotonically decaying portion
     positive = above > 0
     if positive.sum() < 4:
         return float('nan')
 
+    # log-linear estimate (fast, used as p0 for refinement)
     try:
         slope, _ = np.polyfit(tx[positive], np.log(above[positive]), 1)
-        if slope >= 0 or not np.isfinite(slope):
-            return float('nan')
-        return float(-1.0 / slope)
+        tau0 = -1.0 / slope if slope < 0 and np.isfinite(slope) else None
     except Exception:
+        tau0 = None
+
+    if tau0 is None:
         return float('nan')
+
+    # nonlinear refinement with tight maxfev — converges quickly from a good p0
+    amplitude = float(tw[0]) - baseline
+    t0 = float(tx[0])
+    try:
+        popt, _ = curve_fit(
+            lambda t, tau, c: amplitude * np.exp(-(t - t0) / tau) + c,
+            tx,
+            tw,
+            p0=(tau0, baseline),
+            bounds=([1e-6, -np.inf], [np.inf, np.inf]),
+            maxfev=200,
+        )
+        tau = float(popt[0])
+        return tau if np.isfinite(tau) and tau > 0 else float(tau0)
+    except Exception:
+        return float(tau0)
 
 
 def _event_decay_half_time(window, x, peak_idx):
