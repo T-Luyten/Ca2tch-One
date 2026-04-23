@@ -491,6 +491,12 @@ button:disabled { opacity: 0.38; cursor: not-allowed; }
   margin-top: 2px;
 }
 
+.btn-full.active-mode {
+  background: #ca8a04;
+  color: #000;
+  border-color: #a16207;
+}
+
 .btn-row {
   display: flex;
   gap: 6px;

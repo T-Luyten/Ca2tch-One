@@ -139,8 +139,8 @@
         <div class="panel-title">Cell Detection</div>
 
         <div class="param-row">
-          <span class="param-label">Projection</span>
-          <select id="proj-type">
+          <span class="param-label" title="Frame statistic used to build the detection image. Mean = average signal (less noise). Max = brightest frame (reveals dim cells). Std = standard deviation (highlights active cells).">Projection</span>
+          <select id="proj-type" title="Frame statistic used to build the detection image. Mean = average signal (less noise). Max = brightest frame (reveals dim cells). Std = standard deviation (highlights active cells).">
             <option value="mean">Mean</option>
             <option value="max">Max</option>
             <option value="std">Std</option>
@@ -148,36 +148,36 @@
         </div>
 
         <div class="param-row">
-          <span class="param-label">Threshold adj.</span>
-          <input type="range" id="thresh-adj" min="0.2" max="3.0" step="0.05" value="1.0">
+          <span class="param-label" title="Multiplier on the auto-computed detection threshold. >1 = stricter (fewer ROIs); <1 = more inclusive (more ROIs). Adjust when too many background blobs or real cells are missed.">Threshold adj.</span>
+          <input type="range" id="thresh-adj" min="0.2" max="3.0" step="0.05" value="1.0" title="Multiplier on the auto-computed detection threshold. >1 = stricter (fewer ROIs); <1 = more inclusive (more ROIs).">
           <span class="param-value" id="thresh-adj-val">1.00</span>
         </div>
 
         <div class="param-row">
-          <span class="param-label">Smooth σ (px)</span>
-          <input type="range" id="smooth-sigma" min="0.5" max="12" step="0.5" value="2.0">
+          <span class="param-label" title="Gaussian blur applied to the projection before thresholding. Higher values reduce shot noise but may merge touching cells. Typical range: 1–4 px.">Smooth σ (px)</span>
+          <input type="range" id="smooth-sigma" min="0.5" max="12" step="0.5" value="2.0" title="Gaussian blur sigma in pixels. Higher = smoother but may merge adjacent cells.">
           <span class="param-value" id="smooth-sigma-val">2.0</span>
         </div>
 
         <div class="param-row">
-          <span class="param-label">BG radius (px)</span>
-          <input type="number" id="bg-radius" value="30" min="3" max="200">
+          <span class="param-label" title="Radius of the rolling-ball background subtraction disk. Should exceed the diameter of the largest expected cell so only slow background variation is removed.">BG radius (px)</span>
+          <input type="number" id="bg-radius" value="30" min="3" max="200" title="Rolling-ball radius in pixels. Should be larger than the widest expected cell diameter.">
         </div>
 
         <div class="param-row">
-          <span class="param-label">Seed σ (px)</span>
-          <input type="range" id="seed-sigma" min="0.2" max="4.0" step="0.1" value="1.0">
+          <span class="param-label" title="Smoothing of the distance-transform map before finding watershed seeds. Higher values merge adjacent cell centres; lower values may over-split large cells.">Seed σ (px)</span>
+          <input type="range" id="seed-sigma" min="0.2" max="4.0" step="0.1" value="1.0" title="Gaussian sigma for smoothing the distance map before seed detection.">
           <span class="param-value" id="seed-sigma-val">1.0</span>
         </div>
 
         <div class="param-row">
-          <span class="param-label">Min size (px²)</span>
-          <input type="number" id="min-size" value="100" min="4" max="100000">
+          <span class="param-label" title="Discard detected regions smaller than this area. Set to roughly the area of the smallest real cell to suppress noise blobs.">Min size (px²)</span>
+          <input type="number" id="min-size" value="100" min="4" max="100000" title="Minimum ROI area in pixels². Smaller regions are discarded as noise.">
         </div>
 
         <div class="param-row">
-          <span class="param-label">Max size (px²)</span>
-          <input type="number" id="max-size" value="10000" min="10">
+          <span class="param-label" title="Discard detected regions larger than this area. Set to roughly the area of the largest real cell to suppress merged clusters.">Max size (px²)</span>
+          <input type="number" id="max-size" value="10000" min="10" title="Maximum ROI area in pixels². Larger regions are discarded as merged clusters.">
         </div>
 
         <div class="param-row">
@@ -187,11 +187,14 @@
         </div>
 
         <div class="param-row">
-          <span class="param-label">Keep edge ROIs</span>
-          <input type="checkbox" id="allow-edge-rois">
+          <span class="param-label" title="If checked, ROIs that touch the image border are kept. Uncheck to discard cells that are only partially visible at the edge of the field.">Keep edge ROIs</span>
+          <input type="checkbox" id="allow-edge-rois" title="Keep ROIs touching the image border (partially visible cells).">
         </div>
 
-        <button class="btn-full" id="roi-add-btn">Add ROI On Source</button>
+        <button class="btn-full" id="ruler-btn" disabled>Measure On Source</button>
+        <div id="ruler-readout" style="display:none;font-size:11px;color:var(--muted);margin-top:4px;text-align:center"></div>
+
+        <button class="btn-full" id="roi-add-btn" style="margin-top:4px">Add ROI On Source</button>
         <button class="btn-full" id="roi-merge-btn" style="margin-top:4px">Merge 2 Selected ROIs</button>
         <button class="btn-full" id="roi-delete-btn" style="margin-top:4px">Delete Selected ROIs</button>
         <button class="btn-full" id="roi-cancel-btn" style="display:none;margin-top:4px">Cancel ROI Drawing</button>
@@ -217,7 +220,7 @@
         <div class="panel-title">Background Correction</div>
 
         <div class="param-row">
-          <span class="param-label">Mode</span>
+          <span class="param-label" title="None: no background subtraction. Auto: estimate background from pixels outside all ROIs (recommended). Manual ROI: draw a custom background region on the image.">Mode</span>
           <select id="bg-mode">
             <option value="none">None</option>
             <option value="auto" selected>Auto</option>
@@ -252,7 +255,7 @@
         <div class="panel-title">Analysis</div>
 
         <div class="param-row">
-          <span class="param-label">Mode</span>
+          <span class="param-label" title="Single channel: computes ΔF/F₀ from one fluorescence channel. Fura-2 ratio: computes 340/380 nm excitation ratio for calibrated [Ca²⁺] measurements.">Mode</span>
           <select id="analysis-mode">
             <option value="single">Single channel</option>
             <option value="ratio">Fura-2 ratio</option>
@@ -262,32 +265,32 @@
         <!-- Ratio channel selectors (Fura-2 only) -->
         <div id="ratio-opts" style="display:none">
           <div class="param-row">
-            <span class="param-label">340 nm ch</span>
+            <span class="param-label" title="Channel recorded at 340 nm excitation (Ca²⁺-bound Fura-2). Used as the ratio numerator.">340 nm ch</span>
             <select id="ratio-ch-num"></select>
           </div>
           <div class="param-row">
-            <span class="param-label">380 nm ch</span>
+            <span class="param-label" title="Channel recorded at 380 nm excitation (Ca²⁺-free Fura-2). Used as the ratio denominator.">380 nm ch</span>
             <select id="ratio-ch-den"></select>
           </div>
         </div>
 
         <div class="param-row">
-          <span class="param-label">Baseline start (frame)</span>
+          <span class="param-label" title="First frame of the baseline window used to compute F₀ (resting fluorescence). F₀ is averaged over baseline start → end.">Baseline start (frame)</span>
           <input type="number" id="baseline-start" value="0" min="0">
         </div>
 
         <div class="param-row">
-          <span class="param-label">Baseline end (frame)</span>
+          <span class="param-label" title="Last frame of the baseline window used to compute F₀. Frames between start and end are averaged to give the resting fluorescence level.">Baseline end (frame)</span>
           <input type="number" id="baseline-end" value="0" min="0">
         </div>
 
         <div class="param-row">
-          <span class="param-label">AUC start (frame)</span>
+          <span class="param-label" title="First frame of the integration window for the area-under-the-curve (AUC) metric. AUC is computed over AUC start → end.">AUC start (frame)</span>
           <input type="number" id="auc-start" value="0" min="0">
         </div>
 
         <div class="param-row">
-          <span class="param-label">AUC end (frame)</span>
+          <span class="param-label" title="Last frame of the AUC integration window. The ΔF/F₀ trace is integrated between AUC start and AUC end.">AUC end (frame)</span>
           <input type="number" id="auc-end" value="0" min="0">
         </div>
 
@@ -316,12 +319,12 @@
         </div>
 
         <div class="param-row">
-          <span class="param-label">Compute decay tau</span>
-          <input type="checkbox" id="compute-decay-tau">
+          <span class="param-label" title="Fit a mono-exponential decay to the falling phase of each event and report the time constant τ. More informative than t½ but slower to compute.">Compute decay tau</span>
+          <input type="checkbox" id="compute-decay-tau" title="Fit mono-exponential decay τ to each event's falling phase.">
         </div>
 
         <div class="param-row">
-          <span class="param-label">Photobleach</span>
+          <span class="param-label" title="Correction applied to raw fluorescence before ΔF/F₀: None = no correction; Linear = subtract a fitted linear trend; Single exponential = fit and remove an exponential decay due to bleaching.">Photobleach</span>
           <select id="photobleach-mode">
             <option value="none" selected>None</option>
             <option value="linear">Linear</option>
@@ -330,12 +333,12 @@
         </div>
 
         <div class="param-row">
-          <span class="param-label">TG frame</span>
+          <span class="param-label" title="Frame at which thapsigargin (SERCA pump inhibitor) is added. Marks the start of ER Ca²⁺ leak measurement. Set to 0 to disable TG assay.">TG frame</span>
           <input type="number" id="tg-frame" value="0" min="0">
         </div>
 
         <div class="param-row">
-          <span class="param-label">TG end frame</span>
+          <span class="param-label" title="Last frame of the TG assay window. Frames beyond this are excluded from TG metrics. Set to 0 to use the end of the recording.">TG end frame</span>
           <input type="number" id="tg-end-frame" value="0" min="0">
         </div>
 
@@ -351,12 +354,12 @@
         <div id="tg-assay-hint" class="analysis-hint"></div>
 
         <div class="param-row">
-          <span class="param-label">Ca add-back frame</span>
+          <span class="param-label" title="Frame at which extracellular Ca²⁺ is re-introduced after store depletion. Marks the start of store-operated entry measurement. Set to 0 to disable add-back assay.">Ca add-back frame</span>
           <input type="number" id="addback-frame" value="0" min="0">
         </div>
 
         <div class="param-row">
-          <span class="param-label">Add-back end frame</span>
+          <span class="param-label" title="Last frame of the Ca add-back assay window. Set to 0 to use the end of the recording.">Add-back end frame</span>
           <input type="number" id="addback-end-frame" value="0" min="0">
         </div>
 

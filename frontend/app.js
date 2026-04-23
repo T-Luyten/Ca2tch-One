@@ -153,6 +153,9 @@ const S = {
   bgMousePos:   null,     // current mouse position during drawing
   roiDrawing:   null,     // { role, points:[[x,y], ...], mousePos:[x,y] | null }
 
+  // Ruler / measure tool
+  ruler: { active: false, start: null, preview: null, end: null },
+
   // Fura-2 ratiometric
   analysisMode: 'single', // 'single' | 'ratio'
   ratioCh340:   0,        // numerator channel index (340 nm)
@@ -252,6 +255,8 @@ const D = {
   roiCount:      $('roi-count'),
   roiList:       $('roi-list'),
   roiListContext:$('roi-list-context'),
+  rulerBtn:      $('ruler-btn'),
+  rulerReadout:  $('ruler-readout'),
   roiAddBtn:     $('roi-add-btn'),
   roiMergeBtn:   $('roi-merge-btn'),
   roiDeleteBtn:  $('roi-delete-btn'),
@@ -616,6 +621,7 @@ function init() {
     renderROIList(); drawROIs();
     syncButtons();
   });
+  D.rulerBtn.addEventListener('click', () => S.ruler.active ? cancelRuler() : startRuler());
   D.roiAddBtn.addEventListener('click', startManualRoiDraw);
   D.roiMergeBtn.addEventListener('click', mergeSelectedSourceRois);
   D.roiDeleteBtn.addEventListener('click', deleteSelectedSourceRois);
@@ -808,7 +814,8 @@ function syncButtons() {
   D.detectBtn.disabled = !sourceFile().fileId;
   D.transferBtn.disabled = !(sourceFile().fileId && sourceFile().rois.length && measureFile().fileId);
   D.analyzeBtn.disabled = !(measureFile().fileId && selectedAnalysisRoiIds().length);
-  D.roiAddBtn.disabled = !sourceFile().fileId || S.bgDrawing || !!S.roiDrawing;
+  D.rulerBtn.disabled = !sourceFile().fileId;
+  D.roiAddBtn.disabled = !sourceFile().fileId || S.bgDrawing || !!S.roiDrawing || S.ruler.active;
   D.roiMergeBtn.disabled = !sourceFile().fileId || !!S.roiDrawing || sourceSelectedIds.length !== 2;
   D.roiDeleteBtn.disabled = !sourceFile().fileId || !!S.roiDrawing || sourceSelectedIds.length === 0;
   D.roiCancelBtn.style.display = S.roiDrawing ? 'block' : 'none';
@@ -932,6 +939,7 @@ async function runDetection() {
   const file = sourceFile();
   if (!file.fileId) return;
   cancelManualRoiDraw();
+  cancelRuler();
   D.detectBtn.disabled = true;
   D.detectStatus.textContent = 'Detecting cells…';
   D.transferStatus.textContent = '';
@@ -1125,6 +1133,39 @@ function drawROIs(role = S.activeRole) {
       ctx.fill();
     }
   }
+
+  // ── Ruler overlay (source only) ──
+  if (role === 'source' && S.ruler.active) {
+    const p1 = S.ruler.start;
+    const p2 = S.ruler.end || S.ruler.preview;
+    ctx.save();
+    ctx.fillStyle   = '#facc15';
+    ctx.strokeStyle = '#facc15';
+    if (p1) {
+      ctx.beginPath();
+      ctx.arc(p1[0] * sc, p1[1] * sc, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (p1 && p2) {
+      const x1 = p1[0] * sc, y1 = p1[1] * sc;
+      const x2 = p2[0] * sc, y2 = p2[1] * sc;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 3]);
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      ctx.setLineDash([]);
+      [[x1, y1], [x2, y2]].forEach(([px, py]) => {
+        ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI * 2); ctx.fill();
+      });
+      const dx = p2[0] - p1[0], dy = p2[1] - p1[1];
+      const len = Math.sqrt(dx * dx + dy * dy);
+      const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+      ctx.font         = `bold ${Math.max(11, Math.round(11 * sc))}px sans-serif`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(`${len.toFixed(1)} px`, mx, my - 4);
+    }
+    ctx.restore();
+  }
 }
 
 function hexAlpha(hex, a) {
@@ -1255,6 +1296,12 @@ function onCanvasMove(role, e) {
   S.activeRole = role;
   const { x, y } = canvasXY(role, e);
 
+  if (role === 'source' && S.ruler.active && S.ruler.start && !S.ruler.end) {
+    S.ruler.preview = [x, y];
+    drawROIs(role);
+    return;
+  }
+
   if (S.roiDrawing?.role === role) {
     S.roiDrawing.mousePos = [x, y];
     drawROIs(role);
@@ -1283,6 +1330,27 @@ function onCanvasMove(role, e) {
 function onCanvasClick(role, e) {
   S.activeRole = role;
   if (e.detail >= 2) return; // ignore — dblclick handles this
+
+  if (role === 'source' && S.ruler.active) {
+    const { x, y } = canvasXY(role, e);
+    if (!S.ruler.start) {
+      S.ruler.start = [x, y];
+      S.ruler.end = null;
+      S.ruler.preview = null;
+    } else if (!S.ruler.end) {
+      S.ruler.end = [x, y];
+      S.ruler.preview = null;
+      updateRulerReadout();
+    } else {
+      // third click — start a new measurement
+      S.ruler.start = [x, y];
+      S.ruler.end = null;
+      S.ruler.preview = null;
+      D.rulerReadout.style.display = 'none';
+    }
+    drawROIs(role);
+    return;
+  }
 
   if (S.roiDrawing?.role === role) {
     const { x, y } = canvasXY(role, e);
@@ -1347,6 +1415,11 @@ async function onCanvasDblClick(role, e) {
 }
 
 function onCanvasLeave(role) {
+  if (role === 'source' && S.ruler.active && S.ruler.start && !S.ruler.end) {
+    S.ruler.preview = null;
+    drawROIs(role);
+    return;
+  }
   if (S.roiDrawing?.role === role) {
     S.roiDrawing.mousePos = null;
     drawROIs(role);
@@ -1369,6 +1442,7 @@ function startManualRoiDraw() {
   const file = sourceFile();
   if (!file.fileId) return;
   cancelBGDraw();
+  cancelRuler();
   S.activeRole = 'source';
   S.roiDrawing = { role: 'source', points: [], mousePos: null };
   D.viewers.source.roiCanvas.classList.add('drawing-bg');
@@ -1386,6 +1460,46 @@ function cancelManualRoiDraw() {
   D.roiAddBtn.textContent = 'Add ROI';
   syncButtons();
   drawROIs(role);
+}
+
+function startRuler() {
+  if (!sourceFile().fileId) return;
+  cancelManualRoiDraw();
+  cancelBGDraw();
+  S.ruler.active  = true;
+  S.ruler.start   = null;
+  S.ruler.preview = null;
+  S.ruler.end     = null;
+  D.rulerBtn.textContent = 'Cancel Measure';
+  D.rulerBtn.classList.add('active-mode');
+  D.viewers.source.roiCanvas.classList.add('drawing-bg');
+  D.rulerReadout.style.display = 'none';
+  syncButtons();
+  drawROIs('source');
+}
+
+function cancelRuler() {
+  if (!S.ruler.active) return;
+  S.ruler.active  = false;
+  S.ruler.start   = null;
+  S.ruler.preview = null;
+  S.ruler.end     = null;
+  D.rulerBtn.textContent = 'Measure On Source';
+  D.rulerBtn.classList.remove('active-mode');
+  D.viewers.source.roiCanvas.classList.remove('drawing-bg');
+  D.rulerReadout.style.display = 'none';
+  syncButtons();
+  drawROIs('source');
+}
+
+function updateRulerReadout() {
+  const { start, end } = S.ruler;
+  if (!start || !end) { D.rulerReadout.style.display = 'none'; return; }
+  const dx = end[0] - start[0], dy = end[1] - start[1];
+  const len = Math.sqrt(dx * dx + dy * dy);
+  const area = Math.round(Math.PI * (len / 2) ** 2);
+  D.rulerReadout.textContent = `${len.toFixed(1)} px  |  est. area: ${area} px²`;
+  D.rulerReadout.style.display = 'block';
 }
 
 async function commitManualROI(role, polygon) {
