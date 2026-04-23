@@ -191,28 +191,29 @@
           <input type="checkbox" id="allow-edge-rois" title="Keep ROIs touching the image border (partially visible cells).">
         </div>
 
+        <div class="panel-subtitle">ROI Tools</div>
         <button class="btn-full" id="ruler-btn" disabled>Measure On Source</button>
-        <div id="ruler-readout" style="display:none;font-size:11px;color:var(--muted);margin-top:4px;text-align:center"></div>
-
+        <div id="ruler-readout" class="ruler-readout" style="display:none"></div>
         <button class="btn-full" id="roi-add-btn" style="margin-top:4px">Add ROI On Source</button>
-        <button class="btn-full" id="roi-merge-btn" style="margin-top:4px">Merge 2 Selected ROIs</button>
-        <button class="btn-full" id="roi-delete-btn" style="margin-top:4px">Delete Selected ROIs</button>
-        <button class="btn-full" id="roi-cancel-btn" style="display:none;margin-top:4px">Cancel ROI Drawing</button>
-        <div id="roi-draw-hint" style="display:none;color:var(--muted);font-size:10px;margin-top:4px">
-          Click to place vertices on the ROI source viewer, then double-click to finish the ROI.
+        <div class="btn-row" style="margin-top:4px">
+          <button id="roi-merge-btn">Merge 2 ROIs</button>
+          <button id="roi-delete-btn">Delete ROIs</button>
+        </div>
+        <button class="btn-full" id="roi-cancel-btn" style="display:none;margin-top:4px">Cancel Drawing</button>
+        <div id="roi-draw-hint" class="panel-hint" style="display:none;margin-top:4px">
+          Click to place vertices on the ROI source viewer, then double-click to finish.
         </div>
 
-        <button class="btn-full" id="detect-btn" disabled>Detect Cells On ROI Source</button>
-        <div id="detect-status" style="color:var(--muted);font-size:11px;margin-top:4px;min-height:14px"></div>
+        <div class="panel-subtitle">Detection</div>
+        <button class="btn-full btn-primary" id="detect-btn" disabled>Detect Cells On Source</button>
+        <div id="detect-status" class="status-hint"></div>
       </div>
 
       <div class="panel">
         <div class="panel-title">Dataset Pairing</div>
-        <div class="param-row">
-          <span class="param-label">ROIs are detected on the source file and measured on the measurement file.</span>
-        </div>
-        <button class="btn-full" id="transfer-rois-btn" disabled>Copy ROIs To Measurement</button>
-        <div id="transfer-status" style="color:var(--muted);font-size:11px;margin-top:4px;min-height:14px"></div>
+        <div class="panel-hint">Detect ROIs on the source file, then copy them to the measurement file before running analysis.</div>
+        <button class="btn-full btn-primary" id="transfer-rois-btn" disabled>Copy ROIs To Measurement</button>
+        <div id="transfer-status" class="status-hint"></div>
       </div>
 
       <!-- Background correction -->
@@ -235,17 +236,13 @@
             <input type="range" id="bg-percentile" min="5" max="95" step="5" value="50">
             <span class="param-value" id="bg-percentile-val">50%</span>
           </div>
-          <div style="color:var(--muted);font-size:10px;margin-top:2px">
-            50 = median (default). Lower = darker background estimate → larger ΔF/F₀. Use ~25 for sparse or autofluorescent preparations; use ~75 only if background is systematically underestimated. ROI pixels and a surrounding halo are excluded before this statistic is computed.
-          </div>
+          <div class="panel-hint">50 = median (default). Lower → larger ΔF/F₀. Use ~25 for sparse or autofluorescent preparations. ROI pixels and a surrounding halo are excluded.</div>
         </div>
 
         <!-- Manual options -->
         <div id="bg-manual-opts" style="display:none">
           <button id="bg-draw-btn" class="btn-full" style="margin-top:4px">Draw BG Region</button>
-          <div id="bg-draw-hint" style="color:var(--muted);font-size:10px;margin-top:4px">
-            Click to add points · Double-click to close · Esc to cancel
-          </div>
+          <div id="bg-draw-hint" class="panel-hint">Click to add points · Double-click to close · Esc to cancel</div>
           <button id="bg-clear-btn" style="margin-top:4px;width:100%;display:none">Clear BG Region</button>
         </div>
       </div>
@@ -274,6 +271,8 @@
           </div>
         </div>
 
+        <div class="panel-subtitle">Baseline &amp; Integration</div>
+
         <div class="param-row">
           <span class="param-label" title="First frame of the baseline window used to compute F₀ (resting fluorescence). F₀ is averaged over baseline start → end.">Baseline start (frame)</span>
           <input type="number" id="baseline-start" value="0" min="0">
@@ -285,19 +284,38 @@
         </div>
 
         <div class="param-row">
-          <span class="param-label" title="First frame of the integration window for the area-under-the-curve (AUC) metric. AUC is computed over AUC start → end.">AUC start (frame)</span>
+          <span class="param-label" title="First frame of the analysis window. Used for AUC integration and event statistics. Set to 0 to start at the beginning of the recording.">Window start (frame)</span>
           <input type="number" id="auc-start" value="0" min="0">
         </div>
 
         <div class="param-row">
-          <span class="param-label" title="Last frame of the AUC integration window. The ΔF/F₀ trace is integrated between AUC start and AUC end.">AUC end (frame)</span>
+          <span class="param-label" title="Last frame of the analysis window. Used for AUC integration and event statistics. Set to 0 to use the full recording.">Window end (frame)</span>
           <input type="number" id="auc-end" value="0" min="0">
+        </div>
+
+        <div class="panel-subtitle">Signal Processing</div>
+
+        <div class="param-row">
+          <span class="param-label" title="Correction applied to raw fluorescence before ΔF/F₀: None = no correction; Linear = subtract a fitted linear trend; Single exponential = fit and remove an exponential decay due to bleaching.">Photobleach</span>
+          <select id="photobleach-mode">
+            <option value="none" selected>None</option>
+            <option value="linear">Linear</option>
+            <option value="single_exp">Single exponential</option>
+          </select>
         </div>
 
         <div class="param-row">
           <span class="param-label" title="Pixels dilated around each ROI before background estimation. Excludes the cell fluorescence halo. Increase for high-magnification images.">Cell margin (px)</span>
           <input type="number" id="cell-margin-px" value="5" min="0" max="50" step="1"
             title="Pixels dilated around each ROI before background estimation. Excludes the cell fluorescence halo. Increase for high-magnification images.">
+        </div>
+
+        <div class="panel-subtitle">Event Detection</div>
+
+        <div class="param-row">
+          <span class="param-label" title="Threshold = baseline median + N × MAD. Higher = more conservative (fewer events detected).">Event threshold (×MAD)</span>
+          <input type="number" id="threshold-std-multiplier" value="2" min="0.1" max="20" step="0.5"
+            title="Threshold = baseline median + N × MAD. Higher = more conservative (fewer events detected).">
         </div>
 
         <div class="param-row">
@@ -313,24 +331,12 @@
         </div>
 
         <div class="param-row">
-          <span class="param-label" title="Threshold = baseline median + N × MAD. Higher = more conservative (fewer events detected).">Event threshold (×MAD)</span>
-          <input type="number" id="threshold-std-multiplier" value="2" min="0.1" max="20" step="0.5"
-            title="Threshold = baseline median + N × MAD. Higher = more conservative (fewer events detected).">
-        </div>
-
-        <div class="param-row">
           <span class="param-label" title="Fit a mono-exponential decay to the falling phase of each event and report the time constant τ. More informative than t½ but slower to compute.">Compute decay tau</span>
           <input type="checkbox" id="compute-decay-tau" title="Fit mono-exponential decay τ to each event's falling phase.">
         </div>
 
-        <div class="param-row">
-          <span class="param-label" title="Correction applied to raw fluorescence before ΔF/F₀: None = no correction; Linear = subtract a fitted linear trend; Single exponential = fit and remove an exponential decay due to bleaching.">Photobleach</span>
-          <select id="photobleach-mode">
-            <option value="none" selected>None</option>
-            <option value="linear">Linear</option>
-            <option value="single_exp">Single exponential</option>
-          </select>
-        </div>
+        <div class="panel-subtitle">TG Assay (Thapsigargin)</div>
+        <div class="panel-hint">Set TG frame to 0 to disable this assay.</div>
 
         <div class="param-row">
           <span class="param-label" title="Frame at which thapsigargin (SERCA pump inhibitor) is added. Marks the start of ER Ca²⁺ leak measurement. Set to 0 to disable TG assay.">TG frame</span>
@@ -353,6 +359,9 @@
         </div>
         <div id="tg-assay-hint" class="analysis-hint"></div>
 
+        <div class="panel-subtitle">Ca²⁺ Add-Back Assay</div>
+        <div class="panel-hint">Set add-back frame to 0 to disable this assay.</div>
+
         <div class="param-row">
           <span class="param-label" title="Frame at which extracellular Ca²⁺ is re-introduced after store depletion. Marks the start of store-operated entry measurement. Set to 0 to disable add-back assay.">Ca add-back frame</span>
           <input type="number" id="addback-frame" value="0" min="0">
@@ -374,15 +383,15 @@
         </div>
         <div id="addback-assay-hint" class="analysis-hint"></div>
 
-        <button class="btn-full" id="analyze-btn" disabled>Analyze Measurement File</button>
+        <button class="btn-full btn-primary" id="analyze-btn" disabled>Analyze Measurement File</button>
       </div>
 
       <!-- ROI list -->
       <div class="panel" id="roi-panel">
         <div id="roi-list-header">
           <div class="panel-title">ROIs <span id="roi-count"></span></div>
-          <button id="sel-all-btn">All</button>
-          <button id="sel-none-btn">None</button>
+          <button id="sel-all-btn" title="Select all ROIs">All</button>
+          <button id="sel-none-btn" title="Deselect all ROIs">None</button>
         </div>
         <div id="roi-list-context"></div>
         <div id="roi-list"></div>

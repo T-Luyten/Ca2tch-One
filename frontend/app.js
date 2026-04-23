@@ -1979,8 +1979,8 @@ function updatePlotTimeCursor() {
 const MARKER_DEFS = {
   'baseline-start': { getInput: () => D.baselineStart,   color: '#10b981', exclusive: false, label: 'Baseline start'     },
   'baseline-end':   { getInput: () => D.baselineEnd,     color: '#10b981', exclusive: true,  label: 'Baseline end'       },
-  'auc-start':      { getInput: () => D.aucStart,        color: '#60a5fa', exclusive: false, label: 'AUC start'          },
-  'auc-end':        { getInput: () => D.aucEnd,          color: '#60a5fa', exclusive: true,  label: 'AUC end'            },
+  'auc-start':      { getInput: () => D.aucStart,        color: '#60a5fa', exclusive: false, label: 'Window start'       },
+  'auc-end':        { getInput: () => D.aucEnd,          color: '#60a5fa', exclusive: true,  label: 'Window end'         },
   'tg-start':       { getInput: () => D.tgFrame,         color: '#f97316', exclusive: false, label: 'TG start'           },
   'tg-end':         { getInput: () => D.tgEndFrame,      color: '#f97316', exclusive: true,  label: 'TG end'             },
   'addback-start':  { getInput: () => D.addbackFrame,    color: '#8b5cf6', exclusive: false, label: 'Ca add-back start'  },
