@@ -83,15 +83,13 @@ if errorlevel 1 (
     pause & exit /b 1
 )
 
-if not exist "%BUNDLE_DIR%backend" (
-    echo Copying backend...
-    xcopy /E /I /Q "%BUNDLE_DIR%..\backend" "%BUNDLE_DIR%backend" >nul
-)
+echo Syncing backend...
+if exist "%BUNDLE_DIR%backend" rmdir /S /Q "%BUNDLE_DIR%backend"
+xcopy /E /I /Q "%BUNDLE_DIR%..\backend" "%BUNDLE_DIR%backend" >nul
 
-if not exist "%BUNDLE_DIR%frontend" (
-    echo Copying frontend...
-    xcopy /E /I /Q "%BUNDLE_DIR%..\frontend" "%BUNDLE_DIR%frontend" >nul
-)
+echo Syncing frontend...
+if exist "%BUNDLE_DIR%frontend" rmdir /S /Q "%BUNDLE_DIR%frontend"
+xcopy /E /I /Q "%BUNDLE_DIR%..\frontend" "%BUNDLE_DIR%frontend" >nul
 
 echo.
 echo === Bundle ready! Run start.bat to launch the app. ===
