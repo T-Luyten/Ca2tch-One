@@ -187,6 +187,7 @@ class AnalyzeParams(BaseModel):
     addback_baseline_frames: int = 5
     addback_slope_frames: int = 5
     compute_decay_tau: bool = False
+    threshold_std_multiplier: float = 2.0  # MAD multiplier for event detection threshold
 
     @field_validator('channel')
     @classmethod
@@ -242,6 +243,13 @@ class AnalyzeParams(BaseModel):
     def validate_frame_counts(cls, v):
         if v < 0:
             raise ValueError("frame counts must be non-negative")
+        return v
+
+    @field_validator('threshold_std_multiplier')
+    @classmethod
+    def validate_threshold_multiplier(cls, v):
+        if not (0.1 <= v <= 20.0):
+            raise ValueError("threshold_std_multiplier must be between 0.1 and 20.0")
         return v
 
 
@@ -743,6 +751,7 @@ async def analyze(request: Request, file_id: str, params: AnalyzeParams):
             auc_start=params.auc_start,
             auc_end=params.auc_end,
             compute_decay_tau=params.compute_decay_tau,
+            threshold_std_multiplier=params.threshold_std_multiplier,
         )
         tg_peaks, tg_slopes, tg_aucs, addback_peaks, addback_slopes, addback_aucs, addback_latencies = compute_addback_metrics(
             delta_f,

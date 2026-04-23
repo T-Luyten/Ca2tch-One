@@ -222,6 +222,7 @@ const D = {
   ratioCh380El:   $('ratio-ch-den'),
   photobleachMode:$('photobleach-mode'),
   computeDecayTau:$('compute-decay-tau'),
+  thresholdMultiplier:$('threshold-std-multiplier'),
 
   baselineStart: $('baseline-start'),
   baselineEnd:   $('baseline-end'),
@@ -538,6 +539,10 @@ function init() {
   D.aucEnd.addEventListener('change', () => {
     S.aucEnd = Math.max(0, +D.aucEnd.value);
     updatePlotTimeCursor();
+    invalidateAnalysis('', { preserveRaw: true });
+  });
+
+  D.thresholdMultiplier.addEventListener('change', () => {
     invalidateAnalysis('', { preserveRaw: true });
   });
 
@@ -1595,6 +1600,7 @@ async function runAnalysis() {
     addback_baseline_frames: +D.addbackBaselineFrames.value,
     addback_slope_frames: +D.addbackSlopeFrames.value,
     compute_decay_tau: D.computeDecayTau.checked,
+    threshold_std_multiplier: +D.thresholdMultiplier.value,
   };
 
   try {
