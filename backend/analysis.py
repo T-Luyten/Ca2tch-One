@@ -357,7 +357,7 @@ def _event_onset_time(window, x, peak_idx, baseline_level, onset_fraction=0.1):
     return float('nan')
 
 
-_TAU_FIT_FRAMES = 60  # max frames to use for decay tau fit
+_TAU_FIT_SECONDS = 30.0  # max time window for decay tau fit
 
 
 def _event_decay_tau(window, x, peak_idx):
@@ -372,7 +372,9 @@ def _event_decay_tau(window, x, peak_idx):
     if np.isnan(peak_value) or peak_value <= 0:
         return float('nan')
 
-    end = min(peak_idx + _TAU_FIT_FRAMES, len(window))
+    dt = float(x[1] - x[0]) if len(x) > 1 else 1.0
+    fit_frames = max(4, round(_TAU_FIT_SECONDS / dt))
+    end = min(peak_idx + fit_frames, len(window))
     tail_w = window[peak_idx:end]
     tail_x = x[peak_idx:end]
 
