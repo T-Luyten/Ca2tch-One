@@ -278,6 +278,12 @@
         </div>
 
         <div class="param-row">
+          <span class="param-label" title="Rise time is measured from when the signal crosses this % of peak amplitude above baseline. Higher = later onset, shorter reported rise time.">Onset threshold (%)</span>
+          <input type="number" id="onset-fraction" value="10" min="1" max="99" step="5"
+            title="Rise time is measured from when the signal crosses this % of peak amplitude above baseline. Higher = later onset, shorter reported rise time.">
+        </div>
+
+        <div class="param-row">
           <span class="param-label" title="Threshold = baseline median + N × MAD. Higher = more conservative (fewer events detected).">Event threshold (×MAD)</span>
           <input type="number" id="threshold-std-multiplier" value="2" min="0.1" max="20" step="0.5"
             title="Threshold = baseline median + N × MAD. Higher = more conservative (fewer events detected).">
