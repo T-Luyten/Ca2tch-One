@@ -278,6 +278,12 @@
         </div>
 
         <div class="param-row">
+          <span class="param-label" title="Pixels dilated around each ROI before background estimation. Excludes the cell fluorescence halo. Increase for high-magnification images.">Cell margin (px)</span>
+          <input type="number" id="cell-margin-px" value="5" min="0" max="50" step="1"
+            title="Pixels dilated around each ROI before background estimation. Excludes the cell fluorescence halo. Increase for high-magnification images.">
+        </div>
+
+        <div class="param-row">
           <span class="param-label" title="Event duration is measured as the width at this % of peak amplitude above baseline (default 50% = FWHM). Lower = wider reported duration.">Duration width (%)</span>
           <input type="number" id="width-fraction" value="50" min="1" max="99" step="5"
             title="Event duration is measured as the width at this % of peak amplitude above baseline (default 50% = FWHM). Lower = wider reported duration.">

@@ -24,19 +24,19 @@ def polygon_to_mask(polygon, shape):
     return mask
 
 
-def _exclusion_mask(labels):
+def _exclusion_mask(labels, cell_margin_px=_CELL_MARGIN_PX):
     """
     Return a boolean mask of pixels that belong to (or are within
-    _CELL_MARGIN_PX of) any cell ROI.  Used to keep bleed-through from
+    cell_margin_px of) any cell ROI.  Used to keep bleed-through from
     cell halos out of background estimates.
     """
     cell_mask = labels > 0
     if cell_mask.any():
-        return morph.dilation(cell_mask, morph.disk(_CELL_MARGIN_PX))
+        return morph.dilation(cell_mask, morph.disk(max(0, cell_margin_px)))
     return cell_mask
 
 
-def compute_background_trace(ch_data, labels, mode, percentile=50.0, bg_mask=None):
+def compute_background_trace(ch_data, labels, mode, percentile=50.0, bg_mask=None, cell_margin_px=_CELL_MARGIN_PX):
     """
     Estimate per-frame background fluorescence.
 
@@ -59,7 +59,7 @@ def compute_background_trace(ch_data, labels, mode, percentile=50.0, bg_mask=Non
     percentile = float(np.clip(percentile, 0.0, 100.0))
 
     # Build the exclusion mask once — dilation is expensive and labels are static.
-    exclude = _exclusion_mask(labels)
+    exclude = _exclusion_mask(labels, cell_margin_px=cell_margin_px)
 
     if mode == 'auto':
         # Background pixels = everything outside cells (+ safety margin).
@@ -153,7 +153,8 @@ def _photobleach_correct_trace(trace, time_axis, mode='none'):
 
 def extract_traces(data, labels, roi_ids, channel=0,
                    bg_mode='auto', bg_percentile=50.0, bg_mask=None,
-                   photobleach_mode='none', time_axis=None):
+                   photobleach_mode='none', time_axis=None,
+                   cell_margin_px=_CELL_MARGIN_PX):
     """
     Extract mean fluorescence per ROI per frame, with optional background subtraction.
 
@@ -182,6 +183,7 @@ def extract_traces(data, labels, roi_ids, channel=0,
             ch_data, labels, bg_mode,
             percentile=bg_percentile,
             bg_mask=bg_mask,
+            cell_margin_px=cell_margin_px,
         )
         bg_arr = np.array(bg_trace)
     else:
@@ -208,7 +210,8 @@ def extract_ratio_traces(data, labels, roi_ids,
                          bg_mode='auto', bg_percentile=50.0,
                          bg_mask=None,
                          photobleach_mode='none',
-                         time_axis=None):
+                         time_axis=None,
+                         cell_margin_px=_CELL_MARGIN_PX):
     """
     Extract Fura-2 ratiometric traces: ratio = F_num / F_den per ROI per frame.
 
@@ -238,11 +241,13 @@ def extract_ratio_traces(data, labels, roi_ids,
         data, labels, roi_ids, channel=ch_num,
         bg_mode=bg_mode, bg_percentile=bg_percentile, bg_mask=bg_mask,
         photobleach_mode=photobleach_mode, time_axis=time_axis,
+        cell_margin_px=cell_margin_px,
     )
     traces_den, bg_den = extract_traces(
         data, labels, roi_ids, channel=ch_den,
         bg_mode=bg_mode, bg_percentile=bg_percentile, bg_mask=bg_mask,
         photobleach_mode=photobleach_mode, time_axis=time_axis,
+        cell_margin_px=cell_margin_px,
     )
 
     ratio_traces = {}

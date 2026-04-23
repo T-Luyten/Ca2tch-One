@@ -190,6 +190,7 @@ class AnalyzeParams(BaseModel):
     threshold_std_multiplier: float = 2.0  # MAD multiplier for event detection threshold
     onset_fraction: float = 0.1           # fraction of peak amplitude that defines event onset
     width_fraction: float = 0.5           # fraction of peak amplitude used for event duration (FWHM = 0.5)
+    cell_margin_px: int = 5               # dilation margin around ROIs when estimating background
 
     @field_validator('channel')
     @classmethod
@@ -266,6 +267,13 @@ class AnalyzeParams(BaseModel):
     def validate_width_fraction(cls, v):
         if not (0.01 <= v <= 0.99):
             raise ValueError("width_fraction must be between 0.01 and 0.99")
+        return v
+
+    @field_validator('cell_margin_px')
+    @classmethod
+    def validate_cell_margin_px(cls, v):
+        if not (0 <= v <= 50):
+            raise ValueError("cell_margin_px must be between 0 and 50")
         return v
 
 
@@ -741,6 +749,7 @@ async def analyze(request: Request, file_id: str, params: AnalyzeParams):
                 bg_mask=bg_mask,
                 photobleach_mode=params.photobleach_mode,
                 time_axis=sess['metadata']['time_axis'],
+                cell_margin_px=params.cell_margin_px,
             )
             bg_trace = bg_trace_num  # expose numerator BG for display
         else:
@@ -752,6 +761,7 @@ async def analyze(request: Request, file_id: str, params: AnalyzeParams):
                 bg_mask=bg_mask,
                 photobleach_mode=params.photobleach_mode,
                 time_axis=sess['metadata']['time_axis'],
+                cell_margin_px=params.cell_margin_px,
             )
 
         delta_f = compute_delta_f(
