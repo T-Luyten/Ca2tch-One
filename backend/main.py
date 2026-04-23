@@ -252,9 +252,9 @@ class AnalyzeParams(BaseModel):
     @field_validator('tg_baseline_seconds', 'tg_slope_seconds', 'addback_baseline_seconds', 'addback_slope_seconds')
     @classmethod
     def validate_window_seconds(cls, v):
-        if v <= 0:
-            raise ValueError("window duration must be positive")
-        return v
+        if v < 0:
+            raise ValueError("window duration must be non-negative")
+        return max(v, 0.5)  # treat 0 (unconfigured) as 0.5 s minimum
 
     @field_validator('threshold_std_multiplier')
     @classmethod
