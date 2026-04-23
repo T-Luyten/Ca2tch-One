@@ -106,6 +106,7 @@ class DetectParams(BaseModel):
     seed_sigma: float = 1.0
     allow_edge_rois: bool = False
     exclude_mask: Optional[List[List[int]]] = None  # [[y,x], ...]
+    watershed_compactness: float = 0.001  # roundness penalty; higher = more circular ROIs
 
     @field_validator('projection_type')
     @classmethod
@@ -161,6 +162,13 @@ class DetectParams(BaseModel):
     def validate_size_range(cls, v, info):
         if 'data' in info.data and info.data.get('min_size') and v < info.data['min_size']:
             raise ValueError("max_size must be >= min_size")
+        return v
+
+    @field_validator('watershed_compactness')
+    @classmethod
+    def validate_watershed_compactness(cls, v):
+        if not (0.0 <= v <= 1.0):
+            raise ValueError("watershed_compactness must be between 0.0 and 1.0")
         return v
 
 
@@ -543,6 +551,7 @@ async def detect(request: Request, file_id: str, params: DetectParams):
             seed_sigma=params.seed_sigma,
             allow_edge_rois=params.allow_edge_rois,
             exclude_mask=exclude,
+            compactness=params.watershed_compactness,
         )
     except RuntimeError as exc:
         raise HTTPException(503, str(exc)) from exc

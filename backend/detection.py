@@ -52,6 +52,7 @@ def detect_rois(
     seed_sigma=1.0,
     allow_edge_rois=False,
     exclude_mask=None,
+    compactness=0.001,
 ):
     """
     Detect cell ROIs from a 2D projection image.
@@ -144,7 +145,7 @@ def detect_rois(
     # penalty that encourages rounder, more cell-like segments and reduces
     # irregular borders between touching cells.
     labels = segmentation.watershed(
-        -distance_smooth, markers, mask=binary, compactness=0.001
+        -distance_smooth, markers, mask=binary, compactness=compactness
     )
     labels, _ = _relabel_by_size(
         labels,
@@ -164,6 +165,7 @@ def detect_rois(
         max_size=max_size,
         allow_edge_rois=allow_edge_rois,
         exclude_mask=exclude_mask,
+        compactness=compactness,
     )
 
 
@@ -175,6 +177,7 @@ def _expand_labels_to_cell_edges(
     max_size,
     allow_edge_rois=False,
     exclude_mask=None,
+    compactness=0.001,
 ):
     """Expand seed labels to the full cell body via watershed on the signal image."""
     if labels.max() == 0:
@@ -192,7 +195,7 @@ def _expand_labels_to_cell_edges(
     # Watershed on the intensity image fills each seed region toward the cell
     # boundary; compactness keeps segments from becoming elongated in gaps.
     grown_labels = segmentation.watershed(
-        -corrected, labels, mask=cell_mask, compactness=0.001
+        -corrected, labels, mask=cell_mask, compactness=compactness
     )
     return _relabel_by_size(
         grown_labels,

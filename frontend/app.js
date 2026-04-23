@@ -201,6 +201,7 @@ const D = {
   bgRadius:      $('bg-radius'),
   seedSigma:     $('seed-sigma'),
   seedSigmaVal:  $('seed-sigma-val'),
+  watershedCompactness:$('watershed-compactness'),
   allowEdgeRois: $('allow-edge-rois'),
   detectBtn:     $('detect-btn'),
   detectStatus:  $('detect-status'),
@@ -943,6 +944,7 @@ async function runDetection() {
     background_radius:+D.bgRadius.value,
     seed_sigma:       +D.seedSigma.value,
     allow_edge_rois:  D.allowEdgeRois.checked,
+    watershed_compactness: +D.watershedCompactness.value,
   };
 
   try {
