@@ -220,12 +220,12 @@
         <!-- Background statistic -->
         <div id="bg-auto-opts" style="display:none">
           <div class="param-row">
-            <span class="param-label">BG percentile</span>
+            <span class="param-label" title="Percentile of background pixels used as the per-frame background value. 50 = median (robust default). Use lower values (e.g. 25) in sparse or autofluorescent preparations where the median may include stray signal. Higher values raise the background estimate and reduce ΔF/F₀ amplitude.">BG percentile</span>
             <input type="range" id="bg-percentile" min="5" max="95" step="5" value="50">
             <span class="param-value" id="bg-percentile-val">50%</span>
           </div>
           <div style="color:var(--muted);font-size:10px;margin-top:2px">
-            50 = median. Lower values give a darker estimate. ROI pixels and a halo around them are excluded automatically.
+            50 = median (default). Lower = darker background estimate → larger ΔF/F₀. Use ~25 for sparse or autofluorescent preparations; use ~75 only if background is systematically underestimated. ROI pixels and a surrounding halo are excluded before this statistic is computed.
           </div>
         </div>
 
