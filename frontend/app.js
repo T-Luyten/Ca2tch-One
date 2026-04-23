@@ -2893,7 +2893,12 @@ async function apiFetch(path, opts = {}) {
   const res = await fetch(API + path, opts);
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
-    try { msg = (await res.json()).detail || msg; } catch {}
+    try {
+      const detail = (await res.json()).detail;
+      if (typeof detail === 'string') msg = detail;
+      else if (Array.isArray(detail)) msg = detail.map(e => e.msg || JSON.stringify(e)).join('; ');
+      else if (detail) msg = JSON.stringify(detail);
+    } catch {}
     throw new Error(msg);
   }
   return res.json();
