@@ -86,7 +86,10 @@ def detect_rois(
     # while preserving bright cell bodies. Ball radius should be larger than the
     # largest expected cell so it only captures background structure.
     if background_radius is None:
-        ball_radius = int(np.clip(min(projection.shape) * 0.06, 15, 100))
+        # Scale with expected cell size rather than image dimensions.
+        # Ball must exceed cell diameter so it only captures background structure.
+        expected_radius = (min_size / np.pi) ** 0.5
+        ball_radius = int(np.clip(3 * expected_radius, 15, 500))
     else:
         ball_radius = max(3, int(background_radius))
     corrected = morphology.white_tophat(smoothed, morphology.disk(ball_radius))
