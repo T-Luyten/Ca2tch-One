@@ -1723,10 +1723,10 @@ async function runAnalysis() {
     addback_baseline_seconds: +D.addbackBaselineSeconds.value,
     addback_slope_seconds: +D.addbackSlopeSeconds.value,
     compute_decay_tau: D.computeDecayTau.checked,
-    threshold_std_multiplier: +D.thresholdMultiplier.value,
-    cell_margin_px: +D.cellMarginPx.value,
-    width_fraction: +D.widthFraction.value / 100,
-    onset_fraction: +D.onsetFraction.value / 100,
+    threshold_std_multiplier: Math.max(0.1, Math.min(20, +D.thresholdMultiplier.value || 2)),
+    cell_margin_px: Math.max(0, Math.min(50, +D.cellMarginPx.value || 5)),
+    width_fraction: Math.max(1, Math.min(99, +D.widthFraction.value  || 50)) / 100,
+    onset_fraction: Math.max(1, Math.min(99, +D.onsetFraction.value  || 10)) / 100,
   };
 
   try {
