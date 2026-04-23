@@ -58,7 +58,11 @@
               <input type="number" id="source-contrast-min" step="1" value="0">
               <span style="color:var(--muted)">Max</span>
               <input type="number" id="source-contrast-max" step="1" value="65535">
-              <button id="source-auto-contrast-btn">Auto</button>
+              <button id="source-auto-contrast-btn" title="Set min/max from percentile stretch">Auto</button>
+              <input type="number" id="source-p-low" value="1" min="0" max="49.9" step="0.5" style="width:3.5em" title="Low percentile for auto contrast">
+              <span style="color:var(--muted)">–</span>
+              <input type="number" id="source-p-high" value="99.5" min="50.1" max="100" step="0.5" style="width:3.8em" title="High percentile for auto contrast">
+              <span style="color:var(--muted)">%</span>
             </div>
             <div class="ctrl-row">
               <span class="ctrl-label">Colormap</span>
@@ -103,7 +107,11 @@
               <input type="number" id="measure-contrast-min" step="1" value="0">
               <span style="color:var(--muted)">Max</span>
               <input type="number" id="measure-contrast-max" step="1" value="65535">
-              <button id="measure-auto-contrast-btn">Auto</button>
+              <button id="measure-auto-contrast-btn" title="Set min/max from percentile stretch">Auto</button>
+              <input type="number" id="measure-p-low" value="1" min="0" max="49.9" step="0.5" style="width:3.5em" title="Low percentile for auto contrast">
+              <span style="color:var(--muted)">–</span>
+              <input type="number" id="measure-p-high" value="99.5" min="50.1" max="100" step="0.5" style="width:3.8em" title="High percentile for auto contrast">
+              <span style="color:var(--muted)">%</span>
             </div>
             <div class="ctrl-row">
               <span class="ctrl-label">Colormap</span>

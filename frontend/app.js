@@ -314,6 +314,8 @@ D.viewers = {
     cmin: $('source-contrast-min'),
     cmax: $('source-contrast-max'),
     autoBtn: $('source-auto-contrast-btn'),
+    pLow: $('source-p-low'),
+    pHigh: $('source-p-high'),
   },
   measure: {
     role: 'measure',
@@ -329,6 +331,8 @@ D.viewers = {
     cmin: $('measure-contrast-min'),
     cmax: $('measure-contrast-max'),
     autoBtn: $('measure-auto-contrast-btn'),
+    pLow: $('measure-p-low'),
+    pHigh: $('measure-p-high'),
   },
 };
 
@@ -908,8 +912,10 @@ async function autoContrast(role) {
   if (!file.fileId) return;
   try {
     const display = getDisplayParams(file);
+    const pLow  = parseFloat(viewer.pLow.value)  || 1.0;
+    const pHigh = parseFloat(viewer.pHigh.value) || 99.5;
     const res = await apiFetch(
-      `${API}/api/contrast/${file.fileId}?p_low=1&p_high=99.5` +
+      `${API}/api/contrast/${file.fileId}?p_low=${pLow}&p_high=${pHigh}` +
       (display.mode === 'ratio'
         ? `&mode=ratio&ratio_ch_num=${display.ratioChNum}&ratio_ch_den=${display.ratioChDen}`
         : `&channel=${display.channel}`)
