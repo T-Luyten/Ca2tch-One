@@ -626,18 +626,19 @@ def compute_addback_metrics(
     time_axis,
     tg_frame=0,
     tg_end_frame=0,
-    tg_baseline_frames=5,
-    tg_slope_frames=5,
+    tg_baseline_seconds=5.0,
+    tg_slope_seconds=5.0,
     addback_frame=0,
     addback_end_frame=0,
-    addback_baseline_frames=5,
-    addback_slope_frames=5,
+    addback_baseline_seconds=5.0,
+    addback_slope_seconds=5.0,
 ):
     t = np.array(time_axis, dtype=float)
-    tg_baseline_frames = max(1, int(tg_baseline_frames))
-    tg_slope_frames = max(2, int(tg_slope_frames))
-    addback_baseline_frames = max(1, int(addback_baseline_frames))
-    addback_slope_frames = max(2, int(addback_slope_frames))
+    dt = float(t[1] - t[0]) if len(t) > 1 else 1.0
+    tg_baseline_frames = max(1, round(tg_baseline_seconds / dt))
+    tg_slope_frames = max(2, round(tg_slope_seconds / dt))
+    addback_baseline_frames = max(1, round(addback_baseline_seconds / dt))
+    addback_slope_frames = max(2, round(addback_slope_seconds / dt))
     tg_end_frame = int(tg_end_frame)
     addback_end_frame = int(addback_end_frame)
 

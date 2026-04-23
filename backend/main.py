@@ -188,12 +188,12 @@ class AnalyzeParams(BaseModel):
     ratio_ch_den: int = 1                      # Fura-2: denominator channel (e.g. 380 nm)
     tg_frame: int = 0
     tg_end_frame: int = 0
-    tg_baseline_frames: int = 5
-    tg_slope_frames: int = 5
+    tg_baseline_seconds: float = 5.0
+    tg_slope_seconds: float = 5.0
     addback_frame: int = 0
     addback_end_frame: int = 0
-    addback_baseline_frames: int = 5
-    addback_slope_frames: int = 5
+    addback_baseline_seconds: float = 5.0
+    addback_slope_seconds: float = 5.0
     compute_decay_tau: bool = False
     threshold_std_multiplier: float = 2.0  # MAD multiplier for event detection threshold
     onset_fraction: float = 0.1           # fraction of peak amplitude that defines event onset
@@ -249,11 +249,11 @@ class AnalyzeParams(BaseModel):
             raise ValueError("channel indices must be non-negative")
         return v
 
-    @field_validator('tg_baseline_frames', 'tg_slope_frames', 'addback_baseline_frames', 'addback_slope_frames')
+    @field_validator('tg_baseline_seconds', 'tg_slope_seconds', 'addback_baseline_seconds', 'addback_slope_seconds')
     @classmethod
-    def validate_frame_counts(cls, v):
-        if v < 0:
-            raise ValueError("frame counts must be non-negative")
+    def validate_window_seconds(cls, v):
+        if v <= 0:
+            raise ValueError("window duration must be positive")
         return v
 
     @field_validator('threshold_std_multiplier')
@@ -795,12 +795,12 @@ async def analyze(request: Request, file_id: str, params: AnalyzeParams):
             sess['metadata']['time_axis'],
             tg_frame=params.tg_frame,
             tg_end_frame=params.tg_end_frame,
-            tg_baseline_frames=params.tg_baseline_frames,
-            tg_slope_frames=params.tg_slope_frames,
+            tg_baseline_seconds=params.tg_baseline_seconds,
+            tg_slope_seconds=params.tg_slope_seconds,
             addback_frame=params.addback_frame,
             addback_end_frame=params.addback_end_frame,
-            addback_baseline_frames=params.addback_baseline_frames,
-            addback_slope_frames=params.addback_slope_frames,
+            addback_baseline_seconds=params.addback_baseline_seconds,
+            addback_slope_seconds=params.addback_slope_seconds,
         )
     except HTTPException:
         raise
@@ -1198,8 +1198,8 @@ def _build_analysis_workbook(sess):
         'analysis_mode', 'channel', 'ratio_ch_num', 'ratio_ch_den',
         'baseline_start', 'baseline_end', 'auc_start', 'auc_end',
         'bg_mode', 'bg_percentile', 'bg_polygon', 'photobleach_mode',
-        'tg_frame', 'tg_end_frame', 'tg_baseline_frames', 'tg_slope_frames',
-        'addback_frame', 'addback_end_frame', 'addback_baseline_frames', 'addback_slope_frames',
+        'tg_frame', 'tg_end_frame', 'tg_baseline_seconds', 'tg_slope_seconds',
+        'addback_frame', 'addback_end_frame', 'addback_baseline_seconds', 'addback_slope_seconds',
         'roi_ids',
     ]:
         settings_rows.append([key, analysis.get(key, '')])

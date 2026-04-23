@@ -234,13 +234,13 @@ const D = {
   aucEnd:        $('auc-end'),
   tgFrame:       $('tg-frame'),
   tgEndFrame:    $('tg-end-frame'),
-  tgBaselineFrames:$('tg-baseline-frames'),
-  tgSlopeFrames: $('tg-slope-frames'),
+  tgBaselineSeconds:$('tg-baseline-seconds'),
+  tgSlopeSeconds: $('tg-slope-seconds'),
   tgAssayHint:   $('tg-assay-hint'),
   addbackFrame:  $('addback-frame'),
   addbackEndFrame:$('addback-end-frame'),
-  addbackBaselineFrames:$('addback-baseline-frames'),
-  addbackSlopeFrames:$('addback-slope-frames'),
+  addbackBaselineSeconds:$('addback-baseline-seconds'),
+  addbackSlopeSeconds:$('addback-slope-seconds'),
   addbackAssayHint:$('addback-assay-hint'),
   analyzeBtn:    $('analyze-btn'),
   exportRow:     $('export-row'),
@@ -581,7 +581,7 @@ function init() {
     el.addEventListener('input',  () => updatePlotTimeCursor());
     el.addEventListener('change', () => { updatePlotTimeCursor(); invalidateAnalysis('', { preserveRaw: true }); });
   });
-  [D.tgFrame, D.tgEndFrame, D.tgBaselineFrames, D.tgSlopeFrames, D.addbackFrame, D.addbackEndFrame, D.addbackBaselineFrames, D.addbackSlopeFrames].forEach(el => {
+  [D.tgFrame, D.tgEndFrame, D.tgBaselineSeconds, D.tgSlopeSeconds, D.addbackFrame, D.addbackEndFrame, D.addbackBaselineSeconds, D.addbackSlopeSeconds].forEach(el => {
     el.addEventListener('change', () => {
       updatePlotTimeCursor();
       updateAssayValidationHints();
@@ -729,19 +729,15 @@ async function uploadFile(role, file) {
       D.tgFrame.max = metadata.n_frames - 1;
       D.addbackFrame.max = metadata.n_frames - 1;
       D.tgEndFrame.max = metadata.n_frames;
-      D.tgBaselineFrames.max = metadata.n_frames;
-      D.tgSlopeFrames.max = metadata.n_frames;
       D.addbackEndFrame.max = metadata.n_frames;
-      D.addbackBaselineFrames.max = metadata.n_frames;
-      D.addbackSlopeFrames.max = metadata.n_frames;
       D.tgFrame.value = 0;
       D.addbackFrame.value = 0;
       D.tgEndFrame.value = 0;
       D.addbackEndFrame.value = 0;
-      D.tgBaselineFrames.value = 5;
-      D.tgSlopeFrames.value = 5;
-      D.addbackBaselineFrames.value = 5;
-      D.addbackSlopeFrames.value = 5;
+      D.tgBaselineSeconds.value = 5;
+      D.tgSlopeSeconds.value = 5;
+      D.addbackBaselineSeconds.value = 5;
+      D.addbackSlopeSeconds.value = 5;
       S.aucStart = 0;
       S.aucEnd   = 0;
       updateAssayValidationHints();
@@ -1501,7 +1497,7 @@ function clearBGPolygon() {
 }
 
 // ── Analysis ──────────────────────────────────────────────────────────────────
-function validateAssayWindow({ label, startFrame, endFrame, baselineFrames, slopeFrames, nFrames }) {
+function validateAssayWindow({ label, startFrame, endFrame, baselineSeconds, slopeSeconds, nFrames }) {
   if (endFrame === 0) {
     return '';
   }
@@ -1514,18 +1510,11 @@ function validateAssayWindow({ label, startFrame, endFrame, baselineFrames, slop
   if (endFrame > nFrames) {
     return `${label} end frame must be at most ${nFrames}.`;
   }
-  if (baselineFrames < 1) {
-    return `${label} baseline frames must be at least 1.`;
+  if (baselineSeconds <= 0) {
+    return `${label} baseline duration must be positive.`;
   }
-  if (slopeFrames < 2) {
-    return `${label} slope frames must be at least 2.`;
-  }
-  const availableFrames = (endFrame > 0 ? endFrame : nFrames) - startFrame;
-  if (availableFrames < 2) {
-    return `${label} window must contain at least 2 frames.`;
-  }
-  if (slopeFrames > availableFrames) {
-    return `${label} slope frames cannot exceed the number of frames in the ${label} window.`;
+  if (slopeSeconds <= 0) {
+    return `${label} slope duration must be positive.`;
   }
   return '';
 }
@@ -1544,16 +1533,16 @@ function updateAssayValidationHints() {
     label: 'TG',
     startFrame: +D.tgFrame.value,
     endFrame: +D.tgEndFrame.value,
-    baselineFrames: +D.tgBaselineFrames.value,
-    slopeFrames: +D.tgSlopeFrames.value,
+    baselineSeconds: +D.tgBaselineSeconds.value,
+    slopeSeconds: +D.tgSlopeSeconds.value,
     nFrames: file.metadata.n_frames,
   });
   const addbackError = validateAssayWindow({
     label: 'Ca add-back',
     startFrame: +D.addbackFrame.value,
     endFrame: +D.addbackEndFrame.value,
-    baselineFrames: +D.addbackBaselineFrames.value,
-    slopeFrames: +D.addbackSlopeFrames.value,
+    baselineSeconds: +D.addbackBaselineSeconds.value,
+    slopeSeconds: +D.addbackSlopeSeconds.value,
     nFrames: file.metadata.n_frames,
   });
 
@@ -1607,12 +1596,12 @@ async function runAnalysis() {
     ratio_ch_den:   S.ratioCh380,
     tg_frame:       +D.tgFrame.value,
     tg_end_frame:   +D.tgEndFrame.value,
-    tg_baseline_frames: +D.tgBaselineFrames.value,
-    tg_slope_frames: +D.tgSlopeFrames.value,
+    tg_baseline_seconds: +D.tgBaselineSeconds.value,
+    tg_slope_seconds: +D.tgSlopeSeconds.value,
     addback_frame:  +D.addbackFrame.value,
     addback_end_frame: +D.addbackEndFrame.value,
-    addback_baseline_frames: +D.addbackBaselineFrames.value,
-    addback_slope_frames: +D.addbackSlopeFrames.value,
+    addback_baseline_seconds: +D.addbackBaselineSeconds.value,
+    addback_slope_seconds: +D.addbackSlopeSeconds.value,
     compute_decay_tau: D.computeDecayTau.checked,
     threshold_std_multiplier: +D.thresholdMultiplier.value,
     cell_margin_px: +D.cellMarginPx.value,

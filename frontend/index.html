@@ -332,13 +332,13 @@
         </div>
 
         <div class="param-row">
-          <span class="param-label">TG baseline frames</span>
-          <input type="number" id="tg-baseline-frames" value="5" min="1">
+          <span class="param-label" title="Duration of the pre-stimulus baseline window used to compute the resting level before TG addition.">TG baseline (s)</span>
+          <input type="number" id="tg-baseline-seconds" value="5" min="0.5" step="0.5">
         </div>
 
         <div class="param-row">
-          <span class="param-label">TG slope frames</span>
-          <input type="number" id="tg-slope-frames" value="5" min="2">
+          <span class="param-label" title="Duration of the post-stimulus window used to fit the initial leak slope after TG addition.">TG slope (s)</span>
+          <input type="number" id="tg-slope-seconds" value="5" min="0.5" step="0.5">
         </div>
         <div id="tg-assay-hint" class="analysis-hint"></div>
 
@@ -353,13 +353,13 @@
         </div>
 
         <div class="param-row">
-          <span class="param-label">Add-back baseline frames</span>
-          <input type="number" id="addback-baseline-frames" value="5" min="1">
+          <span class="param-label" title="Duration of the pre-stimulus baseline window used to compute the resting level before Ca add-back.">Add-back baseline (s)</span>
+          <input type="number" id="addback-baseline-seconds" value="5" min="0.5" step="0.5">
         </div>
 
         <div class="param-row">
-          <span class="param-label">Add-back slope frames</span>
-          <input type="number" id="addback-slope-frames" value="5" min="2">
+          <span class="param-label" title="Duration of the post-stimulus window used to fit the initial entry slope after Ca add-back.">Add-back slope (s)</span>
+          <input type="number" id="addback-slope-seconds" value="5" min="0.5" step="0.5">
         </div>
         <div id="addback-assay-hint" class="analysis-hint"></div>
 
