@@ -292,13 +292,13 @@ def _interpolated_crossing_time(x0, y0, x1, y1, level):
     return float(x0 + (level - y0) * (x1 - x0) / (y1 - y0))
 
 
-def _event_fwhm(window, x, peak_idx):
+def _event_fwhm(window, x, peak_idx, width_fraction=0.5):
     peak_value = window[peak_idx]
     if np.isnan(peak_value) or peak_value <= 0:
         return float('nan')
 
     baseline_level = float(np.nanmin(window[:peak_idx + 1])) if peak_idx >= 0 else 0.0
-    half_height = baseline_level + 0.5 * (peak_value - baseline_level)
+    half_height = baseline_level + width_fraction * (peak_value - baseline_level)
 
     left_time = None
     for i in range(peak_idx, 0, -1):
@@ -442,6 +442,7 @@ def compute_summary_metrics(
     threshold_std_multiplier=2.0,
     compute_decay_tau=False,
     onset_fraction=0.1,
+    width_fraction=0.5,
 ):
     """
     Compute peak, suprathreshold AUC, mean event FWHM, event frequency,
@@ -514,7 +515,7 @@ def compute_summary_metrics(
                 event_time_to_peaks.append(float(x[idx]) - float(x[0]))
                 roi_event_times.append(float(x[idx]))
                 onset_time = _event_onset_time(window, x, idx, baseline_level=baseline_level, onset_fraction=onset_fraction)
-                width = _event_fwhm(window, x, idx)
+                width = _event_fwhm(window, x, idx, width_fraction=width_fraction)
                 decay = _event_decay_half_time(window, x, idx)
                 if not (np.isfinite(onset_time) and np.isfinite(width) and np.isfinite(decay)):
                     continue

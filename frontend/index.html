@@ -278,6 +278,12 @@
         </div>
 
         <div class="param-row">
+          <span class="param-label" title="Event duration is measured as the width at this % of peak amplitude above baseline (default 50% = FWHM). Lower = wider reported duration.">Duration width (%)</span>
+          <input type="number" id="width-fraction" value="50" min="1" max="99" step="5"
+            title="Event duration is measured as the width at this % of peak amplitude above baseline (default 50% = FWHM). Lower = wider reported duration.">
+        </div>
+
+        <div class="param-row">
           <span class="param-label" title="Rise time is measured from when the signal crosses this % of peak amplitude above baseline. Higher = later onset, shorter reported rise time.">Onset threshold (%)</span>
           <input type="number" id="onset-fraction" value="10" min="1" max="99" step="5"
             title="Rise time is measured from when the signal crosses this % of peak amplitude above baseline. Higher = later onset, shorter reported rise time.">

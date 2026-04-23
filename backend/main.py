@@ -189,6 +189,7 @@ class AnalyzeParams(BaseModel):
     compute_decay_tau: bool = False
     threshold_std_multiplier: float = 2.0  # MAD multiplier for event detection threshold
     onset_fraction: float = 0.1           # fraction of peak amplitude that defines event onset
+    width_fraction: float = 0.5           # fraction of peak amplitude used for event duration (FWHM = 0.5)
 
     @field_validator('channel')
     @classmethod
@@ -258,6 +259,13 @@ class AnalyzeParams(BaseModel):
     def validate_onset_fraction(cls, v):
         if not (0.01 <= v <= 0.99):
             raise ValueError("onset_fraction must be between 0.01 and 0.99")
+        return v
+
+    @field_validator('width_fraction')
+    @classmethod
+    def validate_width_fraction(cls, v):
+        if not (0.01 <= v <= 0.99):
+            raise ValueError("width_fraction must be between 0.01 and 0.99")
         return v
 
 
@@ -761,6 +769,7 @@ async def analyze(request: Request, file_id: str, params: AnalyzeParams):
             compute_decay_tau=params.compute_decay_tau,
             threshold_std_multiplier=params.threshold_std_multiplier,
             onset_fraction=params.onset_fraction,
+            width_fraction=params.width_fraction,
         )
         tg_peaks, tg_slopes, tg_aucs, addback_peaks, addback_slopes, addback_aucs, addback_latencies = compute_addback_metrics(
             delta_f,

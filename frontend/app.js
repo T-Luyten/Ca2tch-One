@@ -223,6 +223,7 @@ const D = {
   photobleachMode:$('photobleach-mode'),
   computeDecayTau:$('compute-decay-tau'),
   thresholdMultiplier:$('threshold-std-multiplier'),
+  widthFraction:     $('width-fraction'),
   onsetFraction:     $('onset-fraction'),
 
   baselineStart: $('baseline-start'),
@@ -544,6 +545,9 @@ function init() {
   });
 
   D.thresholdMultiplier.addEventListener('change', () => {
+    invalidateAnalysis('', { preserveRaw: true });
+  });
+  D.widthFraction.addEventListener('change', () => {
     invalidateAnalysis('', { preserveRaw: true });
   });
   D.onsetFraction.addEventListener('change', () => {
@@ -1605,6 +1609,7 @@ async function runAnalysis() {
     addback_slope_frames: +D.addbackSlopeFrames.value,
     compute_decay_tau: D.computeDecayTau.checked,
     threshold_std_multiplier: +D.thresholdMultiplier.value,
+    width_fraction: +D.widthFraction.value / 100,
     onset_fraction: +D.onsetFraction.value / 100,
   };
 
