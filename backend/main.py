@@ -2,7 +2,9 @@ import asyncio
 import csv
 import io
 import json
+import logging
 import os
+import re
 import sys
 import tempfile
 import time
@@ -14,6 +16,8 @@ from typing import List, Optional
 from xml.sax.saxutils import escape
 
 import psutil
+
+logger = logging.getLogger(__name__)
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -61,13 +65,25 @@ MAX_PROCESS_RSS_BYTES = _max_rss_mb * 1024 * 1024 if _max_rss_mb > 0 else None
 MAX_FILE_SIZE_BYTES = 700 * 1024 * 1024
 
 
+def _safe_filename(name: str) -> str:
+    """Sanitise a filename for use in Content-Disposition headers."""
+    # Remove path separators and control characters
+    name = re.sub(r'[\\/<>|:"*?\x00-\x1f]', '_', name)
+    # Collapse multiple dots to avoid path-traversal tricks
+    name = re.sub(r'\.{2,}', '.', name)
+    return name.strip(' .') or 'untitled'
+
+
 async def _evict_stale_sessions():
     while True:
         await asyncio.sleep(SESSION_SWEEP_INTERVAL)
-        cutoff = time.monotonic() - SESSION_TTL_SECONDS
-        stale = [fid for fid, s in sessions.items() if s['last_accessed'] < cutoff]
-        for fid in stale:
-            sessions.pop(fid, None)
+        try:
+            cutoff = time.monotonic() - SESSION_TTL_SECONDS
+            stale = [fid for fid, s in sessions.items() if s['last_accessed'] < cutoff]
+            for fid in stale:
+                sessions.pop(fid, None)
+        except Exception:
+            logger.exception("Session eviction sweep failed")
 
 
 @asynccontextmanager
@@ -889,7 +905,7 @@ async def export_csv(file_id: str, type: str = Query('raw')):
     for i, t in enumerate(time_axis):
         writer.writerow([f'{t:.4f}'] + [f'{data_map[rid][i]:.4f}' for rid in roi_ids])
 
-    stem = os.path.splitext(sess.get('file_name') or 'calcium')[0]
+    stem = _safe_filename(os.path.splitext(sess.get('file_name') or 'calcium')[0])
     suffix = 'raw_analysis' if type == 'raw' else 'deltaF'
     fname = f'{stem}_{suffix}.csv'
     return Response(
@@ -906,7 +922,7 @@ async def export_workbook(file_id: str):
         raise HTTPException(400, "Run analysis first")
 
     workbook_bytes = _build_analysis_workbook(sess)
-    stem = os.path.splitext(sess.get('file_name') or 'calcium_analysis')[0]
+    stem = _safe_filename(os.path.splitext(sess.get('file_name') or 'calcium_analysis')[0])
     fname = f'{stem}_analysis.xlsx'
     return Response(
         content=workbook_bytes,
@@ -982,7 +998,7 @@ async def export_overlay_image(
     out = io.BytesIO()
     img.save(out, format='PNG')
     out.seek(0)
-    stem = os.path.splitext(sess.get('file_name') or 'calcium_analysis')[0]
+    stem = _safe_filename(os.path.splitext(sess.get('file_name') or 'calcium_analysis')[0])
     suffix = 'projection' if view == 'projection' else f'frame_{t:04d}'
     fname = f'{stem}_roi_overlay_{suffix}.png'
     return Response(

@@ -2,6 +2,8 @@ import numpy as np
 from scipy import ndimage as ndi
 from skimage import filters, morphology, segmentation, measure, feature
 
+__all__ = ['detect_rois', 'get_contours']
+
 
 def _remove_small_objects(binary, min_size):
     cutoff = max(4, int(min_size))

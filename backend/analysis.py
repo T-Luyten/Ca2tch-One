@@ -4,6 +4,16 @@ from scipy.signal import find_peaks
 from skimage.draw import polygon as sk_polygon
 from skimage import morphology as morph
 
+__all__ = [
+    'polygon_to_mask',
+    'compute_background_trace',
+    'extract_traces',
+    'extract_ratio_traces',
+    'compute_delta_f',
+    'compute_summary_metrics',
+    'compute_addback_metrics',
+]
+
 # NumPy < 2.0 compatibility: trapezoid was added in 2.0; trapz works everywhere.
 try:
     from numpy import trapezoid as _trapz
@@ -284,7 +294,10 @@ def compute_delta_f(traces, baseline_start=0, baseline_end=10):
         if start >= end:
             end = min(start + 1, len(arr))
         f0 = arr[start:end].mean()
-        df = (arr - f0) / f0 if f0 != 0 else (arr - f0)
+        if f0 != 0:
+            df = (arr - f0) / f0
+        else:
+            df = np.full_like(arr, np.nan)
         delta_f[roi_id] = df.tolist()
     return delta_f
 
