@@ -1,4 +1,5 @@
 import io
+import logging
 import xml.etree.ElementTree as ET
 
 import czifile
@@ -6,6 +7,8 @@ import nd2
 import numpy as np
 from PIL import Image
 from aicspylibczi import CziFile
+
+logger = logging.getLogger(__name__)
 
 
 def load_nd2_file(filepath: str):
@@ -29,8 +32,8 @@ def load_nd2_file(filepath: str):
                 if len(times) > 1:
                     time_axis = [float(t) for t in times]
                     time_interval = (times[-1] - times[0]) / (len(times) - 1)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning('ND2 time-axis extraction failed: %s', exc)
 
         # Channel names
         channel_names = [f'Ch{i + 1}' for i in range(source_n_channels)]
@@ -38,15 +41,15 @@ def load_nd2_file(filepath: str):
             for i, ch in enumerate(f.metadata.channels):
                 if i < source_n_channels:
                     channel_names[i] = ch.channel.name
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning('ND2 channel-name extraction failed: %s', exc)
 
         # Pixel size
         pixel_size = None
         try:
             pixel_size = float(f.metadata.channels[0].volume.axesCalibration[0])
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning('ND2 pixel-size extraction failed: %s', exc)
 
     # Normalize to (T, C, Y, X)
     data, extra_axes = _normalize_shape(data, sizes)
@@ -117,8 +120,8 @@ def load_czi_file(filepath: str):
                     name = ch.get('Name')
                     if name:
                         channel_names[i] = name
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning('CZI channel-name extraction failed: %s', exc)
 
     # Pixel size (Scaling/Items/Distance Value is in metres)
     pixel_size = None
@@ -127,8 +130,8 @@ def load_czi_file(filepath: str):
             if dist.get('Id') == 'X':
                 pixel_size = float(dist.find('Value').text) * 1e6
                 break
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning('CZI pixel-size extraction failed: %s', exc)
 
     # Time axis from hardware timestamps (seconds)
     time_axis = None
@@ -140,8 +143,8 @@ def load_czi_file(filepath: str):
                 time_axis = [float(t) for t in timestamps[:n_frames]]
                 if len(time_axis) > 1:
                     time_interval = float(np.mean(np.diff(time_axis)))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning('CZI timestamp parsing failed: %s', exc)
 
     if time_axis is None or len(time_axis) != n_frames:
         if time_interval:
