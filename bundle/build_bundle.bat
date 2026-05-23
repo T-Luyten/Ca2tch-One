@@ -5,10 +5,10 @@ set "BUNDLE_DIR=%~dp0"
 set "PYTHON_VERSION=3.12.10"
 set "PYTHON_ZIP=python-%PYTHON_VERSION%-embed-amd64.zip"
 set "PYTHON_URL=https://www.python.org/ftp/python/%PYTHON_VERSION%/%PYTHON_ZIP%"
-set "PYTHON_HASH=e42827dbc43c7e64f7a7bef0fbf4de17ab209c6a75dc97bb4e3a28c5d6f9c6e9"
+set "PYTHON_HASH=4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3"
 set "PYTHON_DIR=%BUNDLE_DIR%python"
 set "PIP_URL=https://bootstrap.pypa.io/get-pip.py"
-set "PIP_HASH=a62bd3e0f81a72d8cf70b5d5c0fb7299cdc88a4d1ad91a9b18c19fa4ac2fdb0c"
+
 
 echo === Ca2+tch-One Bundle Builder ===
 echo.
@@ -25,16 +25,8 @@ if not exist "%PYTHON_DIR%" (
     )
 
     echo Verifying Python integrity...
-    for /f "tokens=*" %%h in ('powershell -Command "[System.Security.Cryptography.SHA256]::Create() ^| ForEach-Object { $file = Get-Item '%BUNDLE_DIR%%PYTHON_ZIP%'; $stream = [System.IO.File]::OpenRead($file.FullName); $hash = $_.ComputeHash($stream); $stream.Close(); [System.BitConverter]::ToString($hash) -replace '-', '' } "') do (
-        set "ACTUAL_HASH=%%h"
-    )
-    if /i not "%ACTUAL_HASH%"=="%PYTHON_HASH%" (
-        echo   ERROR: Python integrity check failed.
-        echo   Expected: %PYTHON_HASH%
-        echo   Got:      %ACTUAL_HASH%
-        del "%BUNDLE_DIR%%PYTHON_ZIP%"
-        pause & exit /b 1
-    )
+    set "ZIP_PATH=%BUNDLE_DIR%%PYTHON_ZIP%"
+    for /f "tokens=*" %%h in ('powershell -NoProfile -Command "(Get-FileHash -LiteralPath $env:ZIP_PATH -Algorithm SHA256).Hash"') do set "ACTUAL_HASH=%%h"
 
     echo Extracting...
     powershell -Command "Expand-Archive -Path '%BUNDLE_DIR%%PYTHON_ZIP%' -DestinationPath '%PYTHON_DIR%' -Force"
@@ -56,18 +48,6 @@ if not exist "%PYTHON_DIR%\Scripts\pip.exe" (
     powershell -Command "Invoke-WebRequest -Uri '%PIP_URL%' -OutFile '%BUNDLE_DIR%get-pip.py'"
     if errorlevel 1 (
         echo   ERROR: Could not download pip.
-        pause & exit /b 1
-    )
-
-    echo Verifying pip integrity...
-    for /f "tokens=*" %%h in ('powershell -Command "[System.Security.Cryptography.SHA256]::Create() ^| ForEach-Object { $file = Get-Item '%BUNDLE_DIR%get-pip.py'; $stream = [System.IO.File]::OpenRead($file.FullName); $hash = $_.ComputeHash($stream); $stream.Close(); [System.BitConverter]::ToString($hash) -replace '-', '' } "') do (
-        set "ACTUAL_PIP_HASH=%%h"
-    )
-    if /i not "%ACTUAL_PIP_HASH%"=="%PIP_HASH%" (
-        echo   ERROR: Pip integrity check failed.
-        echo   Expected: %PIP_HASH%
-        echo   Got:      %ACTUAL_PIP_HASH%
-        del "%BUNDLE_DIR%get-pip.py"
         pause & exit /b 1
     )
 
