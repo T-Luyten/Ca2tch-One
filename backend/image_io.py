@@ -85,9 +85,12 @@ def load_czi_file(filepath: str):
     """
     # Read image array and dimension order with aicspylibczi
     czi = CziFile(filepath)
-    dims = czi.dims
-    sizes = {dim: size for dim, size in zip(dims, czi.size)}
-    data = czi.read_image()[0]
+    try:
+        dims = czi.dims
+        sizes = {dim: size for dim, size in zip(dims, czi.size)}
+        data = czi.read_image()[0]
+    finally:
+        czi.close()
 
     # Normalize to (T, C, Y, X)
     data, extra_axes = _normalize_shape(data, sizes)
