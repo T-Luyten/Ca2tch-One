@@ -4,6 +4,12 @@ from scipy.signal import find_peaks
 from skimage.draw import polygon as sk_polygon
 from skimage import morphology as morph
 
+# NumPy < 2.0 compatibility: trapezoid was added in 2.0; trapz works everywhere.
+try:
+    from numpy import trapezoid as _trapz
+except ImportError:
+    from numpy import trapz as _trapz
+
 # Pixels to exclude around cell edges when estimating background.
 # Cells cast a fluorescence halo due to PSF spread; including these pixels
 # would over-estimate the background and under-correct cell traces.
@@ -502,7 +508,7 @@ def compute_summary_metrics(
         suprathreshold = np.maximum(window - threshold, 0.0)
         valid_auc = ~np.isnan(suprathreshold)
         aucs[roi_id] = (
-            float(np.trapezoid(suprathreshold[valid_auc], x[valid_auc]))
+            float(_trapz(suprathreshold[valid_auc], x[valid_auc]))
             if valid_auc.sum() > 1 else 0.0
         )
 
@@ -605,7 +611,7 @@ def _stimulus_response_metrics(arr, t, stim_frame, end_frame, baseline_frames=5,
     peak_idx = int(np.nanargmax(y))
     peak = float(max(0.0, y[peak_idx]))
     time_to_peak = float(max(0.0, x[peak_idx] - x[0]))
-    auc = float(np.trapezoid(np.maximum(y, 0.0), x)) if x.size > 1 else 0.0
+    auc = float(_trapz(np.maximum(y, 0.0), x)) if x.size > 1 else 0.0
 
     slope_end = min(x.size, max(2, int(slope_frames)))
     slope = 0.0
