@@ -325,6 +325,12 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
             f"File too large ({size_mb} MB). Maximum allowed size is {limit_mb} MB."
         )
 
+    # Validate magic bytes — don't trust the file extension
+    if ext == 'czi' and not file_content.startswith(b'ZISRAW'):
+        raise HTTPException(400, "File does not appear to be a valid CZI file.")
+    if ext == 'nd2' and file_content[:4] != b'\xda\xce\xbe\x0a':
+        raise HTTPException(400, "File does not appear to be a valid ND2 file.")
+
     if MAX_PROCESS_RSS_BYTES is not None:
         rss = psutil.Process().memory_info().rss
         # Conservative peak-RSS estimate: current RSS + decoded array.
