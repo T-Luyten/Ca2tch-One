@@ -44,6 +44,7 @@ from image_io import (
     get_projection,
     get_ratio_frame,
     get_ratio_projection,
+    load_czi_file,
     load_nd2_file,
 )
 
@@ -303,8 +304,9 @@ class MergeRoisParams(BaseModel):
 @app.post("/api/upload")
 @limiter.limit("100/hour")
 async def upload_file(request: Request, file: UploadFile = File(...)):
-    if not (file.filename or '').lower().endswith('.nd2'):
-        raise HTTPException(400, "Only .nd2 files are supported")
+    ext = (file.filename or '').lower().rsplit('.', 1)[-1]
+    if ext not in ('nd2', 'czi'):
+        raise HTTPException(400, "Only .nd2 and .czi files are supported")
 
     if file.size is not None and file.size > MAX_FILE_SIZE_BYTES:
         size_mb = file.size // (1024 * 1024)
@@ -334,14 +336,16 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
             f"File too large ({size_mb} MB). Maximum allowed size is {limit_mb} MB."
         )
 
-    with tempfile.NamedTemporaryFile(suffix='.nd2', delete=False) as tmp:
+    suffix = f'.{ext}'
+    loader = load_czi_file if ext == 'czi' else load_nd2_file
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(file_content)
         tmp_path = tmp.name
 
     try:
-        data, metadata = load_nd2_file(tmp_path)
+        data, metadata = loader(tmp_path)
     except Exception as exc:
-        raise HTTPException(500, "Failed to read file. Please ensure the file is a valid ND2 format.") from exc
+        raise HTTPException(500, f"Failed to read file. Please ensure the file is a valid {ext.upper()} format.") from exc
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)

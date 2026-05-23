@@ -2863,7 +2863,7 @@ async function pollMemory() {
 
     if (textEl) {
       textEl.textContent =
-        `mem: ${fmtBytes(d.process_rss_bytes)} rss · ${fmtBytes(d.session_data_bytes)} nd2 · ${d.session_count} sess`;
+        `mem: ${fmtBytes(d.process_rss_bytes)} rss · ${fmtBytes(d.session_data_bytes)} data · ${d.session_count} sess`;
     }
 
     if (barFill && barWrap) {

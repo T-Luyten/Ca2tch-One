@@ -1,8 +1,11 @@
 import io
+import xml.etree.ElementTree as ET
 
+import czifile
 import nd2
 import numpy as np
 from PIL import Image
+from aicspylibczi import CziFile
 
 
 def load_nd2_file(filepath: str):
@@ -51,6 +54,92 @@ def load_nd2_file(filepath: str):
     n_frames = data.shape[0]
     n_channels = data.shape[1]
     channel_names = channel_names[:n_channels]
+    if time_axis is None or len(time_axis) != n_frames:
+        if time_interval:
+            time_axis = [i * time_interval for i in range(n_frames)]
+        else:
+            time_axis = list(range(n_frames))
+
+    metadata = {
+        'n_frames': data.shape[0],
+        'n_channels': data.shape[1],
+        'height': data.shape[2],
+        'width': data.shape[3],
+        'time_interval': time_interval,
+        'time_axis': time_axis,
+        'channel_names': channel_names,
+        'pixel_size': pixel_size,
+        'dropped_axes': extra_axes,
+        'dtype': str(data.dtype),
+        'dtype_max': float(np.iinfo(data.dtype).max)
+        if np.issubdtype(data.dtype, np.integer)
+        else 1.0,
+    }
+
+    return data, metadata
+
+
+def load_czi_file(filepath: str):
+    """
+    Load Zeiss CZI file. Returns (data, metadata) where data is (T, C, Y, X).
+    """
+    # Read image array and dimension order with aicspylibczi
+    czi = CziFile(filepath)
+    dims = czi.dims
+    sizes = {dim: size for dim, size in zip(dims, czi.size)}
+    data = czi.read_image()[0]
+
+    # Normalize to (T, C, Y, X)
+    data, extra_axes = _normalize_shape(data, sizes)
+
+    n_frames = data.shape[0]
+    n_channels = data.shape[1]
+
+    # Metadata and timestamps via czifile (lightweight XML + timestamp access)
+    cz = czifile.CziFile(filepath)
+    try:
+        timestamps = cz.timestamps
+        meta_str = cz.metadata()
+    finally:
+        cz.close()
+    root = ET.fromstring(meta_str)
+
+    # Channel names
+    channel_names = [f'Ch{i + 1}' for i in range(n_channels)]
+    try:
+        channels_node = root.find('.//Information/Image/Dimensions/Channels')
+        if channels_node is not None:
+            for i, ch in enumerate(channels_node.findall('Channel')):
+                if i < n_channels:
+                    name = ch.get('Name')
+                    if name:
+                        channel_names[i] = name
+    except Exception:
+        pass
+
+    # Pixel size (Scaling/Items/Distance Value is in metres)
+    pixel_size = None
+    try:
+        for dist in root.findall('.//Scaling/Items/Distance'):
+            if dist.get('Id') == 'X':
+                pixel_size = float(dist.find('Value').text) * 1e6
+                break
+    except Exception:
+        pass
+
+    # Time axis from hardware timestamps (seconds)
+    time_axis = None
+    time_interval = None
+    if timestamps is not None and len(timestamps) > 0:
+        try:
+            timestamps = np.asarray(timestamps)
+            if len(timestamps) >= n_frames:
+                time_axis = [float(t) for t in timestamps[:n_frames]]
+                if len(time_axis) > 1:
+                    time_interval = float(np.mean(np.diff(time_axis)))
+        except Exception:
+            pass
+
     if time_axis is None or len(time_axis) != n_frames:
         if time_interval:
             time_axis = [i * time_interval for i in range(n_frames)]
