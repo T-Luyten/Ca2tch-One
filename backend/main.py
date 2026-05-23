@@ -316,17 +316,6 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
             f"File too large ({size_mb} MB). Maximum allowed size is {limit_mb} MB."
         )
 
-    if MAX_PROCESS_RSS_BYTES is not None:
-        rss = psutil.Process().memory_info().rss
-        if rss >= MAX_PROCESS_RSS_BYTES:
-            used_mb = rss // (1024 * 1024)
-            limit_mb = MAX_PROCESS_RSS_BYTES // (1024 * 1024)
-            raise HTTPException(
-                507,
-                f"Server memory full ({used_mb} MB used, limit {limit_mb} MB). "
-                "Close an open session or ask the administrator to raise CACELLFIE_MAX_RSS_MB."
-            )
-
     file_content = await file.read()
     if len(file_content) > MAX_FILE_SIZE_BYTES:
         size_mb = len(file_content) // (1024 * 1024)
@@ -335,6 +324,20 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
             413,
             f"File too large ({size_mb} MB). Maximum allowed size is {limit_mb} MB."
         )
+
+    if MAX_PROCESS_RSS_BYTES is not None:
+        rss = psutil.Process().memory_info().rss
+        # Conservative peak-RSS estimate: current RSS + decoded array.
+        # Microscopy files typically expand ~2x when decompressed into RAM.
+        estimated_peak = rss + len(file_content) * 2
+        if estimated_peak > MAX_PROCESS_RSS_BYTES:
+            used_mb = rss // (1024 * 1024)
+            limit_mb = MAX_PROCESS_RSS_BYTES // (1024 * 1024)
+            raise HTTPException(
+                507,
+                f"Server memory full ({used_mb} MB used, limit {limit_mb} MB). "
+                "Close an open session or ask the administrator to raise CACELLFIE_MAX_RSS_MB."
+            )
 
     suffix = f'.{ext}'
     loader = load_czi_file if ext == 'czi' else load_nd2_file
