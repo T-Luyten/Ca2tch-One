@@ -173,38 +173,41 @@ def load_czi_file(filepath: str):
 
 def _normalize_shape(data, sizes):
     """Ensure data is (T, C, Y, X), dropping unsupported axes by taking index 0."""
-    keys = list(sizes.keys())
+    axes = list(sizes.keys())
     extra_axes = {}
 
     # Collapse Z by max projection if present
-    if 'Z' in keys:
-        z_idx = keys.index('Z')
+    if 'Z' in axes:
+        z_idx = axes.index('Z')
         extra_axes['Z'] = sizes['Z']
         data = data.max(axis=z_idx)
-        keys.pop(z_idx)
+        axes.pop(z_idx)
 
-    # Unsupported axes such as position/scene are not handled in the UI.
-    # Keep the first plane so channel/time indexing remains correct.
-    for axis_name in list(keys):
+    # Drop unsupported axes by taking index 0.
+    # Iterate backwards so popping never affects indices we haven't visited yet.
+    for i in range(len(axes) - 1, -1, -1):
+        axis_name = axes[i]
         if axis_name in {'T', 'C', 'Y', 'X'}:
             continue
-        axis_idx = keys.index(axis_name)
         extra_axes[axis_name] = sizes[axis_name]
-        data = np.take(data, indices=0, axis=axis_idx)
-        keys.pop(axis_idx)
+        data = np.take(data, indices=0, axis=i)
+        axes.pop(i)
 
-    order = [keys.index(axis_name) for axis_name in ('T', 'C', 'Y', 'X') if axis_name in keys]
+    # Transpose to canonical order (T, C, Y, X) for the axes that remain
+    canonical = ('T', 'C', 'Y', 'X')
+    order = [axes.index(ax) for ax in canonical if ax in axes]
     data = np.transpose(data, axes=order)
-    ordered_keys = [axis_name for axis_name in ('T', 'C', 'Y', 'X') if axis_name in keys]
+    present = [ax for ax in canonical if ax in axes]
 
-    if ordered_keys == ['Y', 'X']:
+    # Add missing singleton axes
+    if present == ['Y', 'X']:
         data = data[np.newaxis, np.newaxis, :, :]
-    elif ordered_keys == ['T', 'Y', 'X']:
+    elif present == ['T', 'Y', 'X']:
         data = data[:, np.newaxis, :, :]
-    elif ordered_keys == ['C', 'Y', 'X']:
+    elif present == ['C', 'Y', 'X']:
         data = data[np.newaxis, :, :, :]
-    elif ordered_keys != ['T', 'C', 'Y', 'X']:
-        raise ValueError(f"Unsupported ND2 axis layout after normalization: {ordered_keys}")
+    elif present != ['T', 'C', 'Y', 'X']:
+        raise ValueError(f"Unsupported axis layout after normalization: {present}")
 
     return data, extra_axes
 
