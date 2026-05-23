@@ -369,8 +369,12 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
 
     try:
         data, metadata = loader(tmp_path)
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(500, f"Failed to read file. Please ensure the file is a valid {ext.upper()} format.") from exc
+        detail = f"Failed to read {ext.upper()} file: {type(exc).__name__}: {exc}"
+        logger.error("Upload failed for %s: %s", file.filename, detail, exc_info=True)
+        raise HTTPException(500, detail) from exc
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
