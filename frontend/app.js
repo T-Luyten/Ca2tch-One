@@ -142,6 +142,8 @@ const S = {
   deltaF:       null,
   timeAxis:     null,
   bgTrace:      null,     // background trace (for display)
+  bgTraceNum:   null,     // numerator BG for ratio mode
+  bgTraceDen:   null,     // denominator BG for ratio mode
   scale:        1,        // canvas display scale
 
   // Background drawing
@@ -1742,6 +1744,8 @@ async function runAnalysis() {
     // Return null for missing or empty-object API fields so tab visibility checks work correctly
     const nonEmpty = o => (o && typeof o === 'object' && Object.keys(o).length > 0) ? o : null;
     S.bgTrace  = Array.isArray(res.bg_trace) && res.bg_trace.length ? res.bg_trace : null;
+    S.bgTraceNum = Array.isArray(res.bg_trace_num) && res.bg_trace_num.length ? res.bg_trace_num : null;
+    S.bgTraceDen = Array.isArray(res.bg_trace_den) && res.bg_trace_den.length ? res.bg_trace_den : null;
     S.peaks    = nonEmpty(res.peaks);
     S.aucs     = nonEmpty(res.aucs);
     S.durations = nonEmpty(res.durations);
@@ -1843,10 +1847,66 @@ function renderPlots() {
   const deltaTraces = deltaF ? roiTraces(deltaF) : [];
 
   const isRatio = S.analysisMode === 'ratio';
+  const hasBgRaw = (S.bgTrace && !isRatio) || (isRatio && (S.bgTraceNum || S.bgTraceDen));
+
+  // Background trace overlay(s) on raw plot — use secondary Y-axis so
+  // trace auto-scaling isn't distorted by large BG offsets.
+  if (S.bgTrace && !isRatio) {
+    rawTraces.unshift({
+      x: timeAxis,
+      y: S.bgTrace,
+      name: 'BG',
+      mode: 'lines',
+      line: { color: '#888', width: 1.5, dash: 'dash' },
+      yaxis: 'y2',
+      hovertemplate: '<b>Background</b>  %{y:.1f}<extra></extra>',
+    });
+  }
+  if (isRatio) {
+    if (S.bgTraceNum) {
+      rawTraces.unshift({
+        x: timeAxis,
+        y: S.bgTraceNum,
+        name: 'BG num',
+        mode: 'lines',
+        line: { color: '#22d3ee', width: 1.5, dash: 'dash' },
+        yaxis: 'y2',
+        hovertemplate: '<b>BG num</b>  %{y:.1f}<extra></extra>',
+      });
+    }
+    if (S.bgTraceDen) {
+      rawTraces.unshift({
+        x: timeAxis,
+        y: S.bgTraceDen,
+        name: 'BG den',
+        mode: 'lines',
+        line: { color: '#f472b6', width: 1.5, dash: 'dash' },
+        yaxis: 'y2',
+        hovertemplate: '<b>BG den</b>  %{y:.1f}<extra></extra>',
+      });
+    }
+  }
+
+  const rawLayout = {
+    ...PLOTLY_LAYOUT,
+    yaxis: { ...PLOTLY_LAYOUT.yaxis, title: isRatio ? 'F₃₄₀/F₃₈₀ (ratio)' : 'F (a.u.)' },
+  };
+  if (hasBgRaw) {
+    rawLayout.yaxis2 = {
+      title: 'Background',
+      overlaying: 'y',
+      side: 'right',
+      showgrid: false,
+      color: '#9ca3af',
+      gridcolor: '#374151',
+    };
+    rawLayout.margin = { ...PLOTLY_LAYOUT.margin, r: 58 };
+  }
+
   Plotly.react(
     D.plotRaw,
     rawTraces,
-    { ...PLOTLY_LAYOUT, yaxis: { ...PLOTLY_LAYOUT.yaxis, title: isRatio ? 'F₃₄₀/F₃₈₀ (ratio)' : 'F (a.u.)' } },
+    rawLayout,
     PLOTLY_CONFIG,
   );
 
@@ -1859,11 +1919,12 @@ function renderPlots() {
 
   setupHandleListeners();
 
-  // Click on trace -> toggle ROI selection
+  // Click on trace -> toggle ROI selection (ignore BG traces)
   [D.plotRaw, D.plotDelta].forEach(el => {
     el.removeAllListeners?.('plotly_click');
     el.on('plotly_click', data => {
       const name = data.points[0].data.name;
+      if (!name.startsWith('ROI ')) return;
       const roiId = +name.replace('ROI ', '');
       if (S.selected.has(roiId)) S.selected.delete(roiId); else S.selected.add(roiId);
       invalidateAnalysis('ROI selection changed. Run analysis again.', { preserveRaw: true });
@@ -2789,6 +2850,8 @@ function clearAnalysisState({ preserveRaw = false } = {}) {
   }
   S.deltaF = null;
   S.bgTrace = null;
+  S.bgTraceNum = null;
+  S.bgTraceDen = null;
   S.peaks = null;
   S.aucs = null;
   S.durations = null;

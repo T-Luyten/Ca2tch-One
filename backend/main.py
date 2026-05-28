@@ -403,6 +403,8 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         'traces': None,
         'delta_f': None,
         'bg_trace': None,
+        'bg_trace_num': None,
+        'bg_trace_den': None,
         'peaks': None,
         'aucs': None,
         'durations': None,
@@ -727,6 +729,8 @@ async def transfer_rois(params: TransferRoisParams):
     target['traces'] = None
     target['delta_f'] = None
     target['bg_trace'] = None
+    target['bg_trace_num'] = None
+    target['bg_trace_den'] = None
     target['durations'] = None
     target['frequencies'] = None
     target['rise_times'] = None
@@ -782,7 +786,7 @@ async def analyze(request: Request, file_id: str, params: AnalyzeParams):
             if params.ratio_ch_num == params.ratio_ch_den:
                 raise HTTPException(400, "Numerator and denominator channels must differ")
 
-            traces, bg_trace_num, _bg_den = extract_ratio_traces(
+            traces, bg_trace_num, bg_trace_den = extract_ratio_traces(
                 sess['data'], sess['labels'], roi_ids,
                 ch_num=params.ratio_ch_num,
                 ch_den=params.ratio_ch_den,
@@ -793,7 +797,7 @@ async def analyze(request: Request, file_id: str, params: AnalyzeParams):
                 time_axis=sess['metadata']['time_axis'],
                 cell_margin_px=params.cell_margin_px,
             )
-            bg_trace = bg_trace_num  # expose numerator BG for display
+            bg_trace = bg_trace_num  # default display BG
         else:
             traces, bg_trace = extract_traces(
                 sess['data'], sess['labels'], roi_ids,
@@ -843,6 +847,8 @@ async def analyze(request: Request, file_id: str, params: AnalyzeParams):
     sess['traces'] = traces
     sess['delta_f'] = delta_f
     sess['bg_trace'] = bg_trace
+    sess['bg_trace_num'] = bg_trace_num if params.analysis_mode == 'ratio' else None
+    sess['bg_trace_den'] = bg_trace_den if params.analysis_mode == 'ratio' else None
     sess['analysis_params'] = params.model_dump()
     sess['peaks'] = peaks
     sess['aucs'] = aucs
@@ -867,6 +873,8 @@ async def analyze(request: Request, file_id: str, params: AnalyzeParams):
         'traces':        {str(k): v for k, v in traces.items()},
         'delta_f':       {str(k): v for k, v in delta_f.items()},
         'bg_trace':      bg_trace,
+        'bg_trace_num':  bg_trace_num if params.analysis_mode == 'ratio' else None,
+        'bg_trace_den':  bg_trace_den if params.analysis_mode == 'ratio' else None,
         'bg_mode':       params.bg_mode,
         'photobleach_mode': params.photobleach_mode,
         'analysis_mode': params.analysis_mode,
@@ -1066,6 +1074,8 @@ def _clear_analysis_results(sess: dict):
     sess['traces'] = None
     sess['delta_f'] = None
     sess['bg_trace'] = None
+    sess['bg_trace_num'] = None
+    sess['bg_trace_den'] = None
     sess['analysis_params'] = None
     sess['peaks'] = None
     sess['aucs'] = None
