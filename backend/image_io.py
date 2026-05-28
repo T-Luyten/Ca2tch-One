@@ -100,9 +100,11 @@ def load_czi_file(filepath: str):
     """
     # Read image array and dimension order with aicspylibczi
     czi = CziFile(filepath)
-    dims = czi.dims
-    sizes = {dim: size for dim, size in zip(dims, czi.size)}
-    data = czi.read_image()[0]
+    data, dims_info = czi.read_image()
+    # Use the dimensions returned by read_image() rather than czi.dims/size,
+    # because read_image() may inject axes (e.g. 'A' for RGB/BGR) or
+    # handle mosaic / inconsistent dimensions differently.
+    sizes = {dim: size for dim, size in dims_info}
     # aicspylibczi does not expose an explicit close() method;
     # the underlying C++ reader is released on garbage collection.
     del czi
