@@ -26,6 +26,38 @@ body {
   flex-direction: column;
 }
 
+/* ── Update banner ──────────────────────────────────────────────────────── */
+#update-banner {
+  background: linear-gradient(90deg, #064e3b 0%, #065f46 100%);
+  color: #d1fae5;
+  padding: 6px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 12px;
+  border-bottom: 1px solid #059669;
+  flex-shrink: 0;
+}
+#update-banner.hidden { display: none; }
+#update-banner a {
+  color: #6ee7b7;
+  text-decoration: underline;
+  font-weight: 600;
+}
+#update-banner a:hover { color: #a7f3d0; }
+#update-banner-close {
+  background: transparent;
+  border: none;
+  color: #d1fae5;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  margin-left: 4px;
+}
+#update-banner-close:hover { color: #fff; }
+
 #splash-screen {
   position: fixed;
   inset: 0;

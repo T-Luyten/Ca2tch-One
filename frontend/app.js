@@ -304,6 +304,11 @@ const D = {
   tabRise:       $('tab-rise'),
   tabTg:         $('tab-tg'),
   tabAddback:    $('tab-addback'),
+  appVersion:    $('app-version'),
+  updateBanner:  $('update-banner'),
+  updateBannerText:$('update-banner-text'),
+  updateBannerLink:$('update-banner-link'),
+  updateBannerClose:$('update-banner-close'),
 };
 
 D.viewers = {
@@ -418,8 +423,60 @@ function invalidateAnalysis(message = '', { preserveRaw = false } = {}) {
   if (message) setStatus(message);
 }
 
+// ── Version utilities ─────────────────────────────────────────────────────────
+function _parseVersion(v) {
+  // Strips leading 'v', splits into [major, minor, patch, prerelease]
+  const m = String(v).replace(/^v/, '').match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?(-?(.+))?$/);
+  if (!m) return null;
+  return {
+    major: parseInt(m[1] || 0, 10),
+    minor: parseInt(m[2] || 0, 10),
+    patch: parseInt(m[3] || 0, 10),
+    pre: m[5] || '',
+  };
+}
+
+function _isNewer(current, latest) {
+  const a = _parseVersion(current);
+  const b = _parseVersion(latest);
+  if (!a || !b) return false;
+  if (b.major !== a.major) return b.major > a.major;
+  if (b.minor !== a.minor) return b.minor > a.minor;
+  if (b.patch !== a.patch) return b.patch > a.patch;
+  // A version without prerelease is newer than one with it (e.g. 1.1.0 > 1.1.0-alpha)
+  if (a.pre && !b.pre) return true;
+  if (!a.pre && b.pre) return false;
+  return false;
+}
+
+function _checkForUpdates() {
+  fetch(`${API}/api/latest_version`)
+    .then(r => r.ok ? r.json() : null)
+    .then(d => {
+      if (!d || !d.latest || d.latest === 'unknown') return;
+      const dismissed = localStorage.getItem('ca2tch_one_dismissed_version');
+      if (dismissed === d.latest) return; // user already dismissed this version
+      if (!_isNewer(d.current, d.latest)) return;
+      D.updateBannerText.textContent =
+        `A new version (${d.latest}) is available. You are running v${d.current}.`;
+      D.updateBannerLink.href = d.url || '#';
+      D.updateBanner.classList.remove('hidden');
+    })
+    .catch(() => {});
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 function init() {
+  // Fetch and display server version
+  fetch(`${API}/api/version`)
+    .then(r => r.ok ? r.json() : null)
+    .then(d => {
+      if (d && d.version) D.appVersion.textContent = '(v' + d.version + ')';
+    })
+    .catch(() => {});
+
+  _checkForUpdates();
+
   // Read initial mode values from the DOM so that HTML defaults are respected.
   // State must match what the dropdowns actually show before any user interaction.
   S.colormap.source = D.sourceColormapSel.value;
@@ -433,6 +490,14 @@ function init() {
 
   S.bgPercentile = +D.bgPercentile.value;
   D.bgPercentileV.textContent = S.bgPercentile + '%';
+
+  D.updateBannerClose.addEventListener('click', () => {
+    D.updateBanner.classList.add('hidden');
+    // Remember which version was dismissed so we don't nag again for the same release
+    const txt = D.updateBannerText.textContent;
+    const m = txt.match(/A new version \(([^)]+)\)/);
+    if (m) localStorage.setItem('ca2tch_one_dismissed_version', m[1]);
+  });
 
   D.sourceFileInput.addEventListener('change', e => {
     const file = e.target.files[0];
@@ -486,8 +551,10 @@ function init() {
     viewer.autoBtn.addEventListener('click', () => autoContrast(role));
 
     viewer.pane.addEventListener('pointerenter', () => {
-      S.activeRole = role;
-      renderROIList();
+      if (S.activeRole !== role) {
+        S.activeRole = role;
+        renderROIList();
+      }
       syncButtons();
     });
 
@@ -723,6 +790,12 @@ async function uploadFile(role, file) {
       syncAnalysisUI();
     }
 
+    const ext = file.name.split('.').pop().toLowerCase();
+    const defaultBg = ext === 'czi' ? 25 : 50;
+    S.bgPercentile = defaultBg;
+    D.bgPercentile.value = defaultBg;
+    D.bgPercentileV.textContent = defaultBg + '%';
+
     if (!currentFile(S.activeRole).metadata) {
       S.activeRole = role;
     }
@@ -818,7 +891,7 @@ function syncButtons() {
   D.analyzeBtn.disabled = !(measureFile().fileId && selectedAnalysisRoiIds().length);
   D.rulerBtn.disabled = !sourceFile().fileId;
   D.roiAddBtn.disabled = !sourceFile().fileId || S.bgDrawing || !!S.roiDrawing || S.ruler.active;
-  D.roiMergeBtn.disabled = !sourceFile().fileId || !!S.roiDrawing || sourceSelectedIds.length !== 2;
+  D.roiMergeBtn.disabled = !sourceFile().fileId || !!S.roiDrawing || sourceSelectedIds.length < 2;
   D.roiDeleteBtn.disabled = !sourceFile().fileId || !!S.roiDrawing || sourceSelectedIds.length === 0;
   D.roiCancelBtn.style.display = S.roiDrawing ? 'block' : 'none';
   D.roiDrawHint.style.display = S.roiDrawing ? 'block' : 'none';
@@ -1183,6 +1256,7 @@ function renderROIList() {
   const rois = displayRois();
   const allowDelete = listRole === 'source';
   const selection = listRole === 'source' ? S.sourceEditSelected : S.selected;
+  const prevScrollTop = D.roiList.scrollTop;
   D.roiListContext.textContent = listRole === 'source'
     ? 'Showing ROI Source cells. Check ROIs here to edit, merge, or delete before transfer.'
     : 'Showing Measurement cells. Check ROIs here to include or exclude them from analysis.';
@@ -1233,6 +1307,7 @@ function renderROIList() {
 
     D.roiList.appendChild(div);
   }
+  D.roiList.scrollTop = prevScrollTop;
 }
 
 async function deleteROI(roiId) {
@@ -1261,6 +1336,17 @@ async function deleteROI(roiId) {
 function syncListHighlight(roiId) {
   document.querySelectorAll('.roi-item').forEach(el => {
     el.classList.toggle('highlighted', +el.dataset.id === roiId);
+  });
+}
+
+function syncROIListSelection() {
+  const listRole = currentRoiListRole();
+  const selection = listRole === 'source' ? S.sourceEditSelected : S.selected;
+  document.querySelectorAll('.roi-item').forEach(el => {
+    const id = +el.dataset.id;
+    const cb = el.querySelector('.roi-checkbox');
+    if (cb) cb.checked = selection.has(id);
+    el.classList.toggle('selected', selection.has(id));
   });
 }
 
@@ -1324,7 +1410,18 @@ function onCanvasMove(role, e) {
     syncListHighlight(id);
     if (id !== null) {
       const el = D.roiList.querySelector(`[data-id="${id}"]`);
-      if (el) el.scrollIntoView({ block: 'nearest' });
+      if (el) {
+        const list = D.roiList;
+        const elTop = el.offsetTop;
+        const elBottom = elTop + el.offsetHeight;
+        const listTop = list.scrollTop;
+        const listBottom = listTop + list.clientHeight;
+        if (elTop < listTop) {
+          list.scrollTop = elTop;
+        } else if (elBottom > listBottom) {
+          list.scrollTop = elBottom - list.clientHeight;
+        }
+      }
     }
   }
 }
@@ -1380,7 +1477,7 @@ function onCanvasClick(role, e) {
     else S.selected.add(roi.id);
     invalidateAnalysis('', { preserveRaw: true });
   }
-  renderROIList();
+  syncROIListSelection();
   drawROIs(role);
   syncButtons();
 }
@@ -1543,7 +1640,7 @@ async function commitManualROI(role, polygon) {
 
 async function mergeSelectedSourceRois() {
   const roiIds = selectedSourceRoiIds();
-  if (roiIds.length !== 2) return;
+  if (roiIds.length < 2) return;
 
   try {
     const file = sourceFile();
@@ -1557,8 +1654,7 @@ async function mergeSelectedSourceRois() {
       ...roi,
       color: file.rois.find(existing => existing.id === roi.id)?.color || ROI_COLORS[i % ROI_COLORS.length],
     }));
-    S.sourceEditSelected.delete(roiIds[0]);
-    S.sourceEditSelected.delete(roiIds[1]);
+    for (const rid of roiIds) S.sourceEditSelected.delete(rid);
     if (res.roi?.id != null) S.sourceEditSelected.add(res.roi.id);
 
     measureFile().rois = [];
@@ -1572,7 +1668,10 @@ async function mergeSelectedSourceRois() {
     drawROIs('source');
     drawROIs('measure');
     syncButtons();
-    setStatus(`Merged ROI ${roiIds[0]} and ROI ${roiIds[1]} on ROI source.`);
+    const idsText = roiIds.length === 2
+      ? `ROI ${roiIds[0]} and ROI ${roiIds[1]}`
+      : `ROIs ${roiIds.join(', ')}`;
+    setStatus(`Merged ${idsText} on ROI source.`);
   } catch (err) {
     setStatus(`Merge error: ${err.message}`);
   }
@@ -1928,7 +2027,7 @@ function renderPlots() {
       const roiId = +name.replace('ROI ', '');
       if (S.selected.has(roiId)) S.selected.delete(roiId); else S.selected.add(roiId);
       invalidateAnalysis('ROI selection changed. Run analysis again.', { preserveRaw: true });
-      renderROIList(); drawROIs(); syncButtons();
+      syncROIListSelection(); drawROIs(); syncButtons();
     });
   });
 

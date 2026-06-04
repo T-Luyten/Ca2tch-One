@@ -14,9 +14,14 @@
   </div>
 
   <div id="upload-bar"><div id="upload-bar-fill"></div></div>
+  <div id="update-banner" class="hidden">
+    <span id="update-banner-text"></span>
+    <a id="update-banner-link" href="#" target="_blank" rel="noopener">View release →</a>
+    <button id="update-banner-close" title="Dismiss">×</button>
+  </div>
   <div id="header">
     <img id="logo" src="CatchOne.png" alt="logo" style="height:50px;width:auto">
-    <h1>Ca2+tch-One <span id="app-version">(v1.1.0-alpha)</span></h1>
+    <h1>Ca2+tch-One <span id="app-version"></span></h1>
     <label class="upload-label" for="source-file-input">Load ROI Source</label>
     <input type="file" id="source-file-input" accept=".nd2,.czi" hidden>
     <label class="upload-label" for="measure-file-input">Load Measurement</label>
@@ -197,7 +202,7 @@
         <div id="ruler-readout" class="ruler-readout" style="display:none"></div>
         <button class="btn-full" id="roi-add-btn" style="margin-top:4px">Add ROI On Source</button>
         <div class="btn-row" style="margin-top:4px">
-          <button id="roi-merge-btn">Merge 2 ROIs</button>
+          <button id="roi-merge-btn">Merge ROIs</button>
           <button id="roi-delete-btn">Delete ROIs</button>
         </div>
         <button class="btn-full" id="roi-cancel-btn" style="display:none;margin-top:4px">Cancel Drawing</button>

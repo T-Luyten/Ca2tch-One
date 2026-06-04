@@ -9,7 +9,7 @@
 
 Ca2+tch-One is a browser-based ND2 analysis app for calcium-imaging experiments. It combines ROI detection, manual ROI editing, fluorescence or Fura-2 ratio trace extraction, event analysis, TG leak / Ca add-back assay quantification, and export into a single FastAPI-served app.
 
-The current UI label is `v1.1.0-alpha`.
+The current UI label is `v1.2.0`.
 
 ## What It Does
 

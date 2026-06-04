@@ -13,11 +13,15 @@ import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import List, Optional
+from urllib.request import Request, urlopen
 from xml.sax.saxutils import escape
 
 import psutil
 
 logger = logging.getLogger(__name__)
+
+__version__ = '1.2.0'
+
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,11 +62,21 @@ SESSION_SWEEP_INTERVAL = 5 * 60     # sweep every 5 minutes
 # Maximum process RSS before new uploads are rejected.
 # Override with env var: CACELLFIE_MAX_RSS_MB=2048
 # Set to 0 to disable the limit.
-_max_rss_mb = int(os.environ.get('CACELLFIE_MAX_RSS_MB', '1500'))
-MAX_PROCESS_RSS_BYTES = _max_rss_mb * 1024 * 1024 if _max_rss_mb > 0 else None
+_max_rss_mb_env = os.environ.get('CACELLFIE_MAX_RSS_MB')
+if _max_rss_mb_env is not None:
+    _max_rss_mb = int(_max_rss_mb_env)
+    MAX_PROCESS_RSS_BYTES = _max_rss_mb * 1024 * 1024 if _max_rss_mb > 0 else None
+else:
+    # Default: 75 % of total system memory.
+    MAX_PROCESS_RSS_BYTES = int(psutil.virtual_memory().total * 0.75)
 
-# Maximum file upload size (700 MB)
-MAX_FILE_SIZE_BYTES = 700 * 1024 * 1024
+# Maximum file upload size: derived from the RSS budget.
+# Microscopy files expand ~2x when decompressed into RAM, so cap uploads
+# at half the RSS limit to leave headroom for the decoded array.
+if MAX_PROCESS_RSS_BYTES is not None:
+    MAX_FILE_SIZE_BYTES = MAX_PROCESS_RSS_BYTES // 2
+else:
+    MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 * 1024  # 10 GB fallback when limit is off
 
 
 def _safe_filename(name: str) -> str:
@@ -662,8 +676,8 @@ async def merge_rois(file_id: str, params: MergeRoisParams):
         raise HTTPException(400, "No ROIs detected yet")
 
     roi_ids = sorted({int(roi_id) for roi_id in params.roi_ids})
-    if len(roi_ids) != 2:
-        raise HTTPException(400, "Merge requires exactly 2 ROI ids")
+    if len(roi_ids) < 2:
+        raise HTTPException(400, "Merge requires at least 2 ROI ids")
 
     existing_ids = {roi['id'] for roi in sess['rois']}
     missing = [roi_id for roi_id in roi_ids if roi_id not in existing_ids]
@@ -671,16 +685,34 @@ async def merge_rois(file_id: str, params: MergeRoisParams):
         raise HTTPException(400, f"ROI ids not found: {missing}")
 
     keep_id = min(roi_ids)
-    remove_id = max(roi_ids)
     labels = sess['labels']
 
-    mask_keep = labels == keep_id
-    mask_remove = labels == remove_id
-    dilated_keep = ndimage.binary_dilation(mask_keep)
-    if not (dilated_keep & mask_remove).any():
-        raise HTTPException(400, "ROIs must be touching to merge. The selected ROIs are not adjacent.")
+    # Build masks and adjacency graph
+    id_to_mask = {rid: labels == rid for rid in roi_ids}
 
-    labels[labels == remove_id] = keep_id
+    def are_adjacent(mask_a, mask_b):
+        return (ndimage.binary_dilation(mask_a) & mask_b).any()
+
+    # BFS to verify all selected ROIs form a single connected component
+    from collections import deque
+    visited = {roi_ids[0]}
+    queue = deque([roi_ids[0]])
+    while queue:
+        current = queue.popleft()
+        for other in roi_ids:
+            if other in visited:
+                continue
+            if are_adjacent(id_to_mask[current], id_to_mask[other]):
+                visited.add(other)
+                queue.append(other)
+
+    if len(visited) != len(roi_ids):
+        raise HTTPException(400, "All selected ROIs must be connected to merge. Some selected ROIs are not adjacent to the group.")
+
+    # Merge all selected ROIs into keep_id
+    for rid in roi_ids:
+        if rid != keep_id:
+            labels[labels == rid] = keep_id
 
     merged_regions = [r for r in measure.regionprops(labels) if r.label == keep_id]
     if len(merged_regions) != 1:
@@ -1052,6 +1084,54 @@ async def memory_stats():
         'session_count':        len(sessions),
         'session_data_bytes':   session_data_bytes,
         'session_other_bytes':  session_other_bytes,
+    }
+
+
+@app.get("/api/version")
+async def version():
+    return {'version': __version__}
+
+
+# ── Latest-release cache (refreshed every 5 min) ──────────────────────────────
+_latest_release_cache = None
+_latest_release_ts = 0.0
+_LATEST_RELEASE_TTL = 300  # seconds
+_GITHUB_REPO = 'T-Luyten/Ca2tch-One'
+
+
+def _fetch_latest_release():
+    """Query GitHub releases API and return (tag_name, html_url) or (None, None)."""
+    global _latest_release_cache, _latest_release_ts
+    now = time.monotonic()
+    if _latest_release_cache is not None and (now - _latest_release_ts) < _LATEST_RELEASE_TTL:
+        return _latest_release_cache
+
+    try:
+        req = Request(
+            f'https://api.github.com/repos/{_GITHUB_REPO}/releases/latest',
+            headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'Ca2tch-One'},
+        )
+        with urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        tag = data.get('tag_name', '')
+        url = data.get('html_url', '')
+        result = (tag, url)
+    except Exception as exc:
+        logger.warning('Failed to fetch latest release from GitHub: %s', exc)
+        result = (None, None)
+
+    _latest_release_cache = result
+    _latest_release_ts = now
+    return result
+
+
+@app.get("/api/latest_version")
+async def latest_version():
+    tag, url = _fetch_latest_release()
+    return {
+        'current': __version__,
+        'latest': tag or 'unknown',
+        'url': url or '',
     }
 
 

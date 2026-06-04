@@ -216,6 +216,9 @@ def extract_traces(data, labels, roi_ids, channel=0,
         corrected = raw - bg_arr
         if time_axis is not None and photobleach_mode != 'none':
             corrected = _photobleach_correct_trace(corrected, time_axis, photobleach_mode)
+        # Clamp to non-negative: fluorescence cannot be below zero after BG subtraction.
+        # This prevents negative artefacts when the true signal is at or below background.
+        corrected = np.maximum(corrected, 0.0)
         traces[roi_id] = corrected.tolist()
 
     return traces, bg_trace
@@ -272,8 +275,11 @@ def extract_ratio_traces(data, labels, roi_ids,
             continue
         num = np.array(traces_num[roi_id])
         den = np.array(traces_den[roi_id])
+        # Guard against near-zero denominators that produce unstable ratios when
+        # both channels are close to background.
+        _eps = 1e-9
         with np.errstate(divide='ignore', invalid='ignore'):
-            ratio = np.where(den != 0, num / den, np.nan)
+            ratio = np.where(np.abs(den) > _eps, num / den, np.nan)
         ratio_traces[roi_id] = ratio.tolist()
 
     return ratio_traces, bg_num, bg_den
