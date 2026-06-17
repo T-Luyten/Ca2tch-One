@@ -9,7 +9,7 @@
 
 Ca2+tch-One is a browser-based ND2 analysis app for calcium-imaging experiments. It combines ROI detection, manual ROI editing, fluorescence or Fura-2 ratio trace extraction, event analysis, TG leak / Ca add-back assay quantification, and export into a single FastAPI-served app.
 
-The current UI label is `v1.2.0`.
+The current UI label is `v1.3.0`.
 
 ## What It Does
 
@@ -255,6 +255,7 @@ Manual mode lets you draw a polygon background region. Pixels overlapping ROIs o
 Core analysis settings include:
 
 - baseline start and end frame
+- **F₀ percentile** (default 8; 50 = median; 0 = legacy mean)
 - analysis window start and end frame
 - photobleach correction: `None`, `Linear`, or `Single exponential`
 - event threshold in `xMAD`
@@ -386,3 +387,21 @@ backend/
 start.sh
 start.bat
 ```
+
+## Changelog
+
+### v1.3.0
+
+Scientific robustness and calculation fixes:
+
+- **No trace clamping after background subtraction** — corrected fluorescence can now be negative, preserving the noise distribution.
+- **Robust F₀ estimation** — ΔF/F₀ uses an 8th-percentile baseline by default (configurable 0–100; 0 = legacy mean). Added an `F₀ percentile` control in the UI.
+- **Pre-event baselines for event metrics** — FWHM, decay half-time, and decay tau now use the pre-event baseline instead of the minimum of the surrounding window.
+- **Local-baseline onset detection** — rise-time onset is computed relative to a local baseline for each event, making it robust to slow drift.
+- **Smoothed rate of rise** — maximum rise rate is computed from a Savitzky–Golay smoothed derivative instead of raw frame-to-frame differences.
+- **Ratio denominator guard** — negative denominators now produce NaN rather than negative ratios.
+- **Axis safety** — non-singleton unsupported image axes (e.g., multi-scene `S`) raise a clear error instead of being silently discarded.
+- **TG / Ca add-back slope** — skips the immediate post-stimulus artifact frame when enough frames are available.
+- **ND2 pixel size** — uses `nd2.ND2File.voxel_size().x` for reliable pixel-size extraction.
+- **CSV export precision** — increased from 4 to 6 significant figures.
+- **Code-review items** — fixed rate-limit response, added F₀ ≤ 0 logging, suppressed NumPy 2.x `trapz` deprecation warning, and documented ratio-projection and CZI-library choices.
