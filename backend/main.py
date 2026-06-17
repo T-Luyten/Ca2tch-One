@@ -1,0 +1,1604 @@
+import asyncio
+import csv
+import io
+import json
+import logging
+import math
+import os
+import re
+import sys
+import tempfile
+import time
+import uuid
+import zipfile
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import List, Optional
+from urllib.request import Request, urlopen
+from xml.sax.saxutils import escape
+
+import psutil
+
+logger = logging.getLogger(__name__)
+
+__version__ = '1.3.0'
+
+import numpy as np
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from PIL import ImageDraw
+from pydantic import BaseModel, field_validator
+from scipy import ndimage
+from skimage import measure
+from skimage.filters import threshold_otsu
+from skimage.feature import peak_local_max
+from skimage.segmentation import watershed
+
+from analysis import (
+    compute_addback_metrics,
+    compute_summary_metrics,
+    compute_delta_f,
+    extract_ratio_traces,
+    extract_traces,
+    polygon_to_mask,
+)
+from detection import detect_rois, get_contours
+from image_io import (
+    compute_percentile_contrast,
+    compute_ratio_percentile_contrast,
+    frame_to_image,
+    frame_to_png,
+    get_projection,
+    get_ratio_frame,
+    get_ratio_projection,
+    load_czi_file,
+    load_nd2_file,
+)
+
+SESSION_TTL_SECONDS = 2 * 60 * 60   # 2 hours
+SESSION_SWEEP_INTERVAL = 5 * 60     # sweep every 5 minutes
+
+# Maximum process RSS before new uploads are rejected.
+# Override with env var: CACELLFIE_MAX_RSS_MB=2048
+# Set to 0 to disable the limit.
+_max_rss_mb_env = os.environ.get('CACELLFIE_MAX_RSS_MB')
+if _max_rss_mb_env is not None:
+    _max_rss_mb = int(_max_rss_mb_env)
+    MAX_PROCESS_RSS_BYTES = _max_rss_mb * 1024 * 1024 if _max_rss_mb > 0 else None
+else:
+    # Default: 75 % of total system memory.
+    MAX_PROCESS_RSS_BYTES = int(psutil.virtual_memory().total * 0.75)
+
+# Maximum file upload size: derived from the RSS budget.
+# Microscopy files expand ~2x when decompressed into RAM, so cap uploads
+# at half the RSS limit to leave headroom for the decoded array.
+if MAX_PROCESS_RSS_BYTES is not None:
+    MAX_FILE_SIZE_BYTES = MAX_PROCESS_RSS_BYTES // 2
+else:
+    MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 * 1024  # 10 GB fallback when limit is off
+
+
+def _safe_filename(name: str) -> str:
+    """Sanitise a filename for use in Content-Disposition headers."""
+    # Remove path separators and control characters
+    name = re.sub(r'[\\/<>|:"*?\x00-\x1f]', '_', name)
+    # Collapse multiple dots to avoid path-traversal tricks
+    name = re.sub(r'\.{2,}', '.', name)
+    return name.strip(' .') or 'untitled'
+
+
+async def _evict_stale_sessions():
+    while True:
+        await asyncio.sleep(SESSION_SWEEP_INTERVAL)
+        try:
+            cutoff = time.monotonic() - SESSION_TTL_SECONDS
+            stale = [fid for fid, s in sessions.items() if s['last_accessed'] < cutoff]
+            for fid in stale:
+                sessions.pop(fid, None)
+        except Exception:
+            logger.exception("Session eviction sweep failed")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    task = asyncio.create_task(_evict_stale_sessions())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="Ca2+ cell-fie", lifespan=lifespan)
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Too many requests. Please try again later."},
+    )
+
+
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8001", "http://127.0.0.1:8001"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# In-memory sessions: file_id -> session dict
+sessions: dict = {}
+
+
+# ── Pydantic models ──────────────────────────────────────────────────────────
+
+class DetectParams(BaseModel):
+    channel: int = 0
+    projection_type: str = 'mean'
+    min_size: int = 100
+    max_size: int = 10000
+    threshold_adjust: float = 1.0
+    smooth_sigma: float = 2.0
+    background_radius: Optional[int] = None
+    seed_sigma: float = 1.0
+    allow_edge_rois: bool = False
+    exclude_mask: Optional[List[List[int]]] = None  # [[y,x], ...]
+    watershed_compactness: float = 0.001  # roundness penalty; higher = more circular ROIs
+
+    @field_validator('projection_type')
+    @classmethod
+    def validate_projection_type(cls, v):
+        if v not in ('mean', 'max', 'std'):
+            raise ValueError("projection_type must be 'mean', 'max', or 'std'")
+        return v
+
+    @field_validator('min_size')
+    @classmethod
+    def validate_min_size(cls, v):
+        if v <= 0:
+            raise ValueError("min_size must be positive")
+        return v
+
+    @field_validator('max_size')
+    @classmethod
+    def validate_max_size(cls, v):
+        if v <= 0:
+            raise ValueError("max_size must be positive")
+        return v
+
+    @field_validator('threshold_adjust')
+    @classmethod
+    def validate_threshold_adjust(cls, v):
+        if v <= 0:
+            raise ValueError("threshold_adjust must be positive")
+        return v
+
+    @field_validator('smooth_sigma')
+    @classmethod
+    def validate_smooth_sigma(cls, v):
+        if v < 0:
+            raise ValueError("smooth_sigma must be non-negative")
+        return v
+
+    @field_validator('background_radius')
+    @classmethod
+    def validate_background_radius(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("background_radius must be positive")
+        return v
+
+    @field_validator('seed_sigma')
+    @classmethod
+    def validate_seed_sigma(cls, v):
+        if v <= 0:
+            raise ValueError("seed_sigma must be positive")
+        return v
+
+    @field_validator('max_size', mode='after')
+    @classmethod
+    def validate_size_range(cls, v, info):
+        if 'data' in info.data and info.data.get('min_size') and v < info.data['min_size']:
+            raise ValueError("max_size must be >= min_size")
+        return v
+
+    @field_validator('watershed_compactness')
+    @classmethod
+    def validate_watershed_compactness(cls, v):
+        if not (0.0 <= v <= 1.0):
+            raise ValueError("watershed_compactness must be between 0.0 and 1.0")
+        return v
+
+
+class AnalyzeParams(BaseModel):
+    channel: int = 0
+    baseline_start: int = 0
+    baseline_end: int = 0
+    baseline_percentile: float = 8.0         # F0 percentile (0 = mean, 8 = common Ca2+ default, 50 = median)
+    auc_start: int = 0
+    auc_end: int = 0
+    roi_ids: Optional[List[int]] = None        # None = all current ROIs
+    bg_mode: str = 'auto'                      # 'none' | 'auto' | 'manual'
+    bg_percentile: float = 50.0                # background statistic percentile for auto/manual modes (50 = median)
+    bg_polygon: Optional[List[List[float]]] = None  # manual mode: [[x,y], ...]
+    photobleach_mode: str = 'none'             # 'none' | 'linear' | 'single_exp'
+    analysis_mode: str = 'single'              # 'single' | 'ratio'
+    ratio_ch_num: int = 0                      # Fura-2: numerator channel (e.g. 340 nm)
+    ratio_ch_den: int = 1                      # Fura-2: denominator channel (e.g. 380 nm)
+    tg_frame: int = 0
+    tg_end_frame: int = 0
+    tg_baseline_seconds: float = 5.0
+    tg_slope_seconds: float = 5.0
+    addback_frame: int = 0
+    addback_end_frame: int = 0
+    addback_baseline_seconds: float = 5.0
+    addback_slope_seconds: float = 5.0
+    compute_decay_tau: bool = False
+    threshold_std_multiplier: float = 2.0  # MAD multiplier for event detection threshold
+    onset_fraction: float = 0.1           # fraction of peak amplitude that defines event onset
+    width_fraction: float = 0.5           # fraction of peak amplitude used for event duration (FWHM = 0.5)
+    cell_margin_px: int = 5               # dilation margin around ROIs when estimating background
+
+    @field_validator('channel')
+    @classmethod
+    def validate_channel(cls, v):
+        if v < 0:
+            raise ValueError("channel must be non-negative")
+        return v
+
+    @field_validator('baseline_start', 'baseline_end', 'auc_start', 'auc_end', 'tg_frame', 'tg_end_frame', 'addback_frame', 'addback_end_frame')
+    @classmethod
+    def validate_frame_indices(cls, v):
+        if v < 0:
+            raise ValueError("frame indices must be non-negative")
+        return v
+
+    @field_validator('bg_mode')
+    @classmethod
+    def validate_bg_mode(cls, v):
+        if v not in ('none', 'auto', 'manual'):
+            raise ValueError("bg_mode must be 'none', 'auto', or 'manual'")
+        return v
+
+    @field_validator('bg_percentile')
+    @classmethod
+    def validate_bg_percentile(cls, v):
+        if not (0 <= v <= 100):
+            raise ValueError("bg_percentile must be between 0 and 100")
+        return v
+
+    @field_validator('baseline_percentile')
+    @classmethod
+    def validate_baseline_percentile(cls, v):
+        if not (0 <= v <= 100):
+            raise ValueError("baseline_percentile must be between 0 and 100")
+        return v
+
+    @field_validator('photobleach_mode')
+    @classmethod
+    def validate_photobleach_mode(cls, v):
+        if v not in ('none', 'linear', 'single_exp'):
+            raise ValueError("photobleach_mode must be 'none', 'linear', or 'single_exp'")
+        return v
+
+    @field_validator('analysis_mode')
+    @classmethod
+    def validate_analysis_mode(cls, v):
+        if v not in ('single', 'ratio'):
+            raise ValueError("analysis_mode must be 'single' or 'ratio'")
+        return v
+
+    @field_validator('ratio_ch_num', 'ratio_ch_den')
+    @classmethod
+    def validate_ratio_channels(cls, v):
+        if v < 0:
+            raise ValueError("channel indices must be non-negative")
+        return v
+
+    @field_validator('tg_baseline_seconds', 'tg_slope_seconds', 'addback_baseline_seconds', 'addback_slope_seconds')
+    @classmethod
+    def validate_window_seconds(cls, v):
+        if v < 0:
+            raise ValueError("window duration must be non-negative")
+        return max(v, 0.5)  # treat 0 (unconfigured) as 0.5 s minimum
+
+    @field_validator('threshold_std_multiplier')
+    @classmethod
+    def validate_threshold_multiplier(cls, v):
+        if not (0.1 <= v <= 20.0):
+            raise ValueError("threshold_std_multiplier must be between 0.1 and 20.0")
+        return v
+
+    @field_validator('onset_fraction')
+    @classmethod
+    def validate_onset_fraction(cls, v):
+        if not (0.01 <= v <= 0.99):
+            raise ValueError("onset_fraction must be between 0.01 and 0.99")
+        return v
+
+    @field_validator('width_fraction')
+    @classmethod
+    def validate_width_fraction(cls, v):
+        if not (0.01 <= v <= 0.99):
+            raise ValueError("width_fraction must be between 0.01 and 0.99")
+        return v
+
+    @field_validator('cell_margin_px')
+    @classmethod
+    def validate_cell_margin_px(cls, v):
+        if not (0 <= v <= 50):
+            raise ValueError("cell_margin_px must be between 0 and 50")
+        return v
+
+
+class TransferRoisParams(BaseModel):
+    source_file_id: str
+    target_file_id: str
+
+
+class ManualRoiParams(BaseModel):
+    polygon: List[List[float]]  # [[x, y], ...]
+
+
+class AutoDetectRoiParams(BaseModel):
+    seed: List[float]           # [x, y]
+    radius: int = 60            # search radius in pixels
+    dilation: int = 0           # positive = grow, negative = shrink
+    replace_roi_id: Optional[int] = None
+
+
+class MergeRoisParams(BaseModel):
+    roi_ids: List[int]
+
+
+# ── API routes ────────────────────────────────────────────────────────────────
+
+@app.post("/api/upload")
+@limiter.limit("100/hour")
+async def upload_file(request: Request, file: UploadFile = File(...)):
+    ext = (file.filename or '').lower().rsplit('.', 1)[-1]
+    if ext not in ('nd2', 'czi'):
+        raise HTTPException(400, "Only .nd2 and .czi files are supported")
+
+    if file.size is not None and file.size > MAX_FILE_SIZE_BYTES:
+        size_mb = file.size // (1024 * 1024)
+        limit_mb = MAX_FILE_SIZE_BYTES // (1024 * 1024)
+        raise HTTPException(
+            413,
+            f"File too large ({size_mb} MB). Maximum allowed size is {limit_mb} MB."
+        )
+
+    file_content = await file.read()
+    if len(file_content) > MAX_FILE_SIZE_BYTES:
+        size_mb = len(file_content) // (1024 * 1024)
+        limit_mb = MAX_FILE_SIZE_BYTES // (1024 * 1024)
+        raise HTTPException(
+            413,
+            f"File too large ({size_mb} MB). Maximum allowed size is {limit_mb} MB."
+        )
+
+    # Validate magic bytes — don't trust the file extension
+    if ext == 'czi' and not file_content.startswith(b'ZISRAW'):
+        raise HTTPException(400, "File does not appear to be a valid CZI file.")
+    if ext == 'nd2' and file_content[:4] != b'\xda\xce\xbe\x0a':
+        raise HTTPException(400, "File does not appear to be a valid ND2 file.")
+
+    if MAX_PROCESS_RSS_BYTES is not None:
+        rss = psutil.Process().memory_info().rss
+        # Conservative peak-RSS estimate: current RSS + decoded array.
+        # Microscopy files typically expand ~2x when decompressed into RAM.
+        estimated_peak = rss + len(file_content) * 2
+        if estimated_peak > MAX_PROCESS_RSS_BYTES:
+            used_mb = rss // (1024 * 1024)
+            limit_mb = MAX_PROCESS_RSS_BYTES // (1024 * 1024)
+            raise HTTPException(
+                507,
+                f"Server memory full ({used_mb} MB used, limit {limit_mb} MB). "
+                "Close an open session or ask the administrator to raise CACELLFIE_MAX_RSS_MB."
+            )
+
+    suffix = f'.{ext}'
+    loader = load_czi_file if ext == 'czi' else load_nd2_file
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(file_content)
+        tmp_path = tmp.name
+
+    try:
+        data, metadata = loader(tmp_path)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        # User-fixable data-shape problems (e.g. unsupported multi-scene axes)
+        # should surface clearly as a client error rather than a server crash.
+        detail = f"Failed to read {ext.upper()} file: {exc}"
+        logger.error("Upload failed for %s: %s", file.filename, detail, exc_info=True)
+        raise HTTPException(400, detail) from exc
+    except Exception as exc:
+        detail = f"Failed to read {ext.upper()} file: {type(exc).__name__}: {exc}"
+        logger.error("Upload failed for %s: %s", file.filename, detail, exc_info=True)
+        raise HTTPException(500, detail) from exc
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+    file_id = str(uuid.uuid4())
+    contrast = {
+        ch: {
+            'min': lo,
+            'max': hi,
+        }
+        for ch, (lo, hi) in (
+            (ch, compute_percentile_contrast(data, channel=ch))
+            for ch in range(metadata['n_channels'])
+        )
+    }
+
+    sessions[file_id] = {
+        'last_accessed': time.monotonic(),
+        'file_name': file.filename,
+        'data': data,
+        'metadata': metadata,
+        'labels': None,
+        'rois': [],
+        'detection_params': None,
+        'analysis_params': None,
+        'traces': None,
+        'delta_f': None,
+        'bg_trace': None,
+        'bg_trace_num': None,
+        'bg_trace_den': None,
+        'peaks': None,
+        'aucs': None,
+        'durations': None,
+        'frequencies': None,
+        'rise_times': None,
+        'time_to_peaks': None,
+        'decays': None,
+        'decay_taus': None,
+        'rise_rates': None,
+        'event_times': None,
+        'tg_peaks': None,
+        'tg_slopes': None,
+        'tg_aucs': None,
+        'addback_peaks': None,
+        'addback_slopes': None,
+        'addback_aucs': None,
+        'addback_latencies': None,
+        'contrast': contrast,
+    }
+
+    return {
+        'file_id': file_id,
+        'metadata': metadata,
+        'initial_contrast': contrast[0],
+    }
+
+
+@app.post("/api/duplicate/{file_id}")
+async def duplicate_file(file_id: str):
+    sess = _get_session(file_id)
+    new_id = str(uuid.uuid4())
+    sessions[new_id] = {
+        'last_accessed': time.monotonic(),
+        'file_name': sess['file_name'],
+        'data': sess['data'],
+        'metadata': sess['metadata'],
+        'labels': None,
+        'rois': [],
+        'detection_params': None,
+        'analysis_params': None,
+        'traces': None,
+        'delta_f': None,
+        'bg_trace': None,
+        'bg_trace_num': None,
+        'bg_trace_den': None,
+        'peaks': None,
+        'aucs': None,
+        'durations': None,
+        'frequencies': None,
+        'rise_times': None,
+        'time_to_peaks': None,
+        'decays': None,
+        'decay_taus': None,
+        'rise_rates': None,
+        'event_times': None,
+        'tg_peaks': None,
+        'tg_slopes': None,
+        'tg_aucs': None,
+        'addback_peaks': None,
+        'addback_slopes': None,
+        'addback_aucs': None,
+        'addback_latencies': None,
+        'contrast': sess['contrast'],
+    }
+    return {
+        'file_id': new_id,
+        'metadata': sess['metadata'],
+        'initial_contrast': sess['contrast'][0],
+    }
+
+
+@app.get("/api/frame/{file_id}")
+async def get_frame(
+    file_id: str,
+    t: int = Query(0),
+    mode: str = Query('channel'),
+    channel: int = Query(0),
+    ratio_ch_num: int = Query(0),
+    ratio_ch_den: int = Query(1),
+    cmin: Optional[float] = None,
+    cmax: Optional[float] = None,
+    colormap: str = Query('green'),
+):
+    if mode not in ('channel', 'ratio'):
+        raise HTTPException(400, "mode must be 'channel' or 'ratio'")
+
+    sess = _get_session(file_id)
+    data = sess['data']
+    meta = sess['metadata']
+
+    t = int(np.clip(t, 0, meta['n_frames'] - 1))
+    channel = int(np.clip(channel, 0, meta['n_channels'] - 1))
+    ratio_ch_num = int(np.clip(ratio_ch_num, 0, meta['n_channels'] - 1))
+    ratio_ch_den = int(np.clip(ratio_ch_den, 0, meta['n_channels'] - 1))
+
+    if mode == 'ratio':
+        if ratio_ch_num == ratio_ch_den:
+            raise HTTPException(400, "Ratio display requires different numerator and denominator channels")
+        if cmin is None or cmax is None:
+            lo, hi = compute_ratio_percentile_contrast(
+                data, ch_num=ratio_ch_num, ch_den=ratio_ch_den
+            )
+            cmin = lo if cmin is None else cmin
+            cmax = hi if cmax is None else cmax
+        frame = get_ratio_frame(data, t=t, ch_num=ratio_ch_num, ch_den=ratio_ch_den)
+    else:
+        if cmin is None:
+            cmin = sess['contrast'][channel]['min']
+        if cmax is None:
+            cmax = sess['contrast'][channel]['max']
+        frame = data[t, channel, :, :]
+    return Response(
+        content=frame_to_png(frame, cmin, cmax, colormap),
+        media_type='image/png',
+    )
+
+
+@app.get("/api/projection/{file_id}")
+async def get_projection_image(
+    file_id: str,
+    type: str = Query('mean'),
+    mode: str = Query('channel'),
+    channel: int = Query(0),
+    ratio_ch_num: int = Query(0),
+    ratio_ch_den: int = Query(1),
+    cmin: Optional[float] = None,
+    cmax: Optional[float] = None,
+    colormap: str = Query('green'),
+):
+    if type not in ('mean', 'max', 'min', 'std'):
+        raise HTTPException(400, "type must be 'mean', 'max', 'min', or 'std'")
+    if mode not in ('channel', 'ratio'):
+        raise HTTPException(400, "mode must be 'channel' or 'ratio'")
+
+    sess = _get_session(file_id)
+    meta = sess['metadata']
+    channel = int(np.clip(channel, 0, meta['n_channels'] - 1))
+    ratio_ch_num = int(np.clip(ratio_ch_num, 0, meta['n_channels'] - 1))
+    ratio_ch_den = int(np.clip(ratio_ch_den, 0, meta['n_channels'] - 1))
+    if mode == 'ratio':
+        if ratio_ch_num == ratio_ch_den:
+            raise HTTPException(400, "Ratio display requires different numerator and denominator channels")
+        proj = get_ratio_projection(
+            sess['data'], proj_type=type, ch_num=ratio_ch_num, ch_den=ratio_ch_den
+        )
+        if cmin is None or cmax is None:
+            lo, hi = compute_ratio_percentile_contrast(
+                sess['data'], ch_num=ratio_ch_num, ch_den=ratio_ch_den
+            )
+            cmin = lo if cmin is None else cmin
+            cmax = hi if cmax is None else cmax
+    else:
+        proj = get_projection(sess['data'], proj_type=type, channel=channel)
+    return Response(
+        content=frame_to_png(proj, cmin, cmax, colormap),
+        media_type='image/png',
+    )
+
+
+@app.get("/api/contrast/{file_id}")
+async def get_contrast(
+    file_id: str,
+    mode: str = Query('channel'),
+    channel: int = Query(0),
+    ratio_ch_num: int = Query(0),
+    ratio_ch_den: int = Query(1),
+    p_low: float = Query(1.0),
+    p_high: float = Query(99.5),
+):
+    if not (0 <= p_low <= 100):
+        raise HTTPException(400, "p_low must be between 0 and 100")
+    if not (0 <= p_high <= 100):
+        raise HTTPException(400, "p_high must be between 0 and 100")
+    if p_low > p_high:
+        raise HTTPException(400, "p_low must be <= p_high")
+
+    sess = _get_session(file_id)
+    meta = sess['metadata']
+    channel = int(np.clip(channel, 0, meta['n_channels'] - 1))
+    ratio_ch_num = int(np.clip(ratio_ch_num, 0, meta['n_channels'] - 1))
+    ratio_ch_den = int(np.clip(ratio_ch_den, 0, meta['n_channels'] - 1))
+
+    if mode == 'ratio':
+        if ratio_ch_num == ratio_ch_den:
+            raise HTTPException(400, "Ratio display requires different numerator and denominator channels")
+        lo, hi = compute_ratio_percentile_contrast(
+            sess['data'], ch_num=ratio_ch_num, ch_den=ratio_ch_den,
+            p_low=p_low, p_high=p_high
+        )
+    else:
+        lo, hi = compute_percentile_contrast(
+            sess['data'], channel=channel, p_low=p_low, p_high=p_high
+        )
+        sess['contrast'][channel] = {'min': lo, 'max': hi}
+    return {'min': lo, 'max': hi}
+
+
+@app.post("/api/detect/{file_id}")
+@limiter.limit("500/hour")
+async def detect(request: Request, file_id: str, params: DetectParams):
+    sess = _get_session(file_id)
+    data = sess['data']
+
+    proj = get_projection(data, proj_type=params.projection_type,
+                          channel=params.channel).astype(float)
+
+    exclude = None
+    if params.exclude_mask:
+        h, w = proj.shape
+        exclude = np.zeros((h, w), dtype=bool)
+        for coord in params.exclude_mask:
+            if 0 <= coord[0] < h and 0 <= coord[1] < w:
+                exclude[coord[0], coord[1]] = True
+
+    try:
+        labels, regions = detect_rois(
+            proj,
+            min_size=params.min_size,
+            max_size=params.max_size,
+            threshold_adjust=params.threshold_adjust,
+            smooth_sigma=params.smooth_sigma,
+            background_radius=params.background_radius,
+            seed_sigma=params.seed_sigma,
+            allow_edge_rois=params.allow_edge_rois,
+            exclude_mask=exclude,
+            compactness=params.watershed_compactness,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(500, "Detection failed. Please try with different parameters.") from exc
+
+    sess['labels'] = labels
+    sess['traces'] = None
+    sess['delta_f'] = None
+    sess['detection_params'] = params.model_dump()
+
+    rois = get_contours(labels, regions)
+    sess['rois'] = rois
+
+    return {'n_rois': len(rois), 'rois': rois}
+
+
+@app.delete("/api/roi/{file_id}/{roi_id}")
+async def delete_roi(file_id: str, roi_id: int):
+    sess = _get_session(file_id)
+    if sess['labels'] is None:
+        raise HTTPException(400, "No ROIs detected yet")
+
+    sess['labels'][sess['labels'] == roi_id] = 0
+    sess['rois'] = [r for r in sess['rois'] if r['id'] != roi_id]
+    _clear_analysis_results(sess)
+    return {'deleted': roi_id}
+
+
+@app.post("/api/roi/{file_id}")
+async def add_manual_roi(file_id: str, params: ManualRoiParams):
+    sess = _get_session(file_id)
+    h = sess['metadata']['height']
+    w = sess['metadata']['width']
+
+    if not params.polygon or len(params.polygon) < 3:
+        raise HTTPException(400, "Manual ROI requires a polygon with at least 3 points")
+
+    mask = polygon_to_mask(params.polygon, (h, w))
+    if not mask.any():
+        raise HTTPException(400, "Manual ROI polygon does not cover any image pixels")
+
+    if sess['labels'] is None:
+        sess['labels'] = np.zeros((h, w), dtype=int)
+
+    overlap = mask & (sess['labels'] > 0)
+    if overlap.any():
+        raise HTTPException(400, "Manual ROI overlaps an existing ROI")
+
+    new_id = int(sess['labels'].max()) + 1
+    sess['labels'][mask] = new_id
+
+    rois = get_contours(sess['labels'], [r for r in measure.regionprops(sess['labels']) if r.label == new_id])
+    if len(rois) != 1:
+        sess['labels'][mask] = 0
+        raise HTTPException(500, "Manual ROI could not be converted into a valid contour")
+
+    sess['rois'].append(rois[0])
+    sess['rois'].sort(key=lambda roi: roi['id'])
+    _clear_analysis_results(sess)
+
+    return {
+        'roi': rois[0],
+        'n_rois': len(sess['rois']),
+        'rois': sess['rois'],
+    }
+
+
+@app.post("/api/roi/{file_id}/autodetect")
+async def autodetect_roi(file_id: str, params: AutoDetectRoiParams):
+    sess = _get_session(file_id)
+    h = sess['metadata']['height']
+    w = sess['metadata']['width']
+    sx, sy = int(params.seed[0]), int(params.seed[1])
+
+    if not (0 <= sx < w and 0 <= sy < h):
+        raise HTTPException(400, "Seed point is outside image bounds")
+
+    # Use max projection of the first channel for detection
+    proj = get_projection(sess['data'], proj_type='max', channel=0)
+
+    r = params.radius
+    x0, x1 = max(0, sx - r), min(w, sx + r)
+    y0, y1 = max(0, sy - r), min(h, sy + r)
+    patch = proj[y0:y1, x0:x1].astype(np.float32)
+
+    if patch.size == 0:
+        raise HTTPException(400, "Search patch is empty")
+
+    patch_blur = ndimage.gaussian_filter(patch, sigma=1.5)
+
+    try:
+        thresh = threshold_otsu(patch_blur)
+    except ValueError:
+        raise HTTPException(400, "Could not determine threshold in this region")
+
+    mask = patch_blur > thresh
+
+    # Find connected component containing seed
+    labels_cc, n = ndimage.label(mask)
+    seed_label = labels_cc[sy - y0, sx - x0]
+
+    if seed_label == 0:
+        # Seed fell in background — try a lower percentile threshold
+        thresh = np.percentile(patch_blur, 60)
+        mask = patch_blur > thresh
+        labels_cc, n = ndimage.label(mask)
+        seed_label = labels_cc[sy - y0, sx - x0]
+        if seed_label == 0:
+            raise HTTPException(400, "Could not detect a cell at this location")
+
+    roi_mask = labels_cc == seed_label
+
+    # Watershed to split touching cells ------------------------------------------------
+    distance = ndimage.distance_transform_edt(roi_mask)
+    distance_smooth = ndimage.gaussian_filter(distance, sigma=2)
+    coords = peak_local_max(distance_smooth, min_distance=8, labels=roi_mask)
+
+    if len(coords) > 1:
+        markers = np.zeros_like(distance, dtype=int)
+        for i, (cy, cx) in enumerate(coords, start=1):
+            markers[cy, cx] = i
+        ws_labels = watershed(-distance_smooth, markers, mask=roi_mask)
+        seed_ws_label = ws_labels[sy - y0, sx - x0]
+        if seed_ws_label > 0:
+            roi_mask = ws_labels == seed_ws_label
+    # ----------------------------------------------------------------------------------
+
+    roi_mask = ndimage.binary_fill_holes(roi_mask)
+
+    # Apply scroll-based dilation / erosion
+    dilation = params.dilation
+    if dilation > 0:
+        roi_mask = ndimage.binary_dilation(roi_mask, iterations=dilation)
+    elif dilation < 0:
+        roi_mask = ndimage.binary_erosion(roi_mask, iterations=-dilation)
+
+    # Place back into full-image mask
+    full_mask = np.zeros((h, w), dtype=bool)
+    full_mask[y0:y1, x0:x1] = roi_mask
+
+    if sess['labels'] is None:
+        sess['labels'] = np.zeros((h, w), dtype=int)
+
+    # Remove replaced ROI if requested
+    if params.replace_roi_id is not None:
+        old_id = params.replace_roi_id
+        if old_id in {roi['id'] for roi in sess['rois']}:
+            sess['labels'][sess['labels'] == old_id] = 0
+            sess['rois'] = [r for r in sess['rois'] if r['id'] != old_id]
+            new_id = old_id
+        else:
+            new_id = int(sess['labels'].max()) + 1
+    else:
+        new_id = int(sess['labels'].max()) + 1
+
+    # Check overlap with remaining existing ROIs
+    overlap = full_mask & (sess['labels'] > 0)
+    if overlap.any():
+        raise HTTPException(400, "Detected ROI overlaps an existing ROI")
+
+    sess['labels'][full_mask] = new_id
+
+    regions = [r for r in measure.regionprops(sess['labels']) if r.label == new_id]
+    if len(regions) != 1:
+        sess['labels'][full_mask] = 0
+        raise HTTPException(500, "Auto-detected ROI could not be converted into a valid contour")
+
+    roi = get_contours(sess['labels'], regions)[0]
+    sess['rois'].append(roi)
+    sess['rois'].sort(key=lambda roi: roi['id'])
+    _clear_analysis_results(sess)
+
+    return {
+        'roi': roi,
+        'n_rois': len(sess['rois']),
+        'rois': sess['rois'],
+    }
+
+
+@app.post("/api/roi/{file_id}/merge")
+async def merge_rois(file_id: str, params: MergeRoisParams):
+    sess = _get_session(file_id)
+    if sess['labels'] is None or not sess['rois']:
+        raise HTTPException(400, "No ROIs detected yet")
+
+    roi_ids = sorted({int(roi_id) for roi_id in params.roi_ids})
+    if len(roi_ids) < 2:
+        raise HTTPException(400, "Merge requires at least 2 ROI ids")
+
+    existing_ids = {roi['id'] for roi in sess['rois']}
+    missing = [roi_id for roi_id in roi_ids if roi_id not in existing_ids]
+    if missing:
+        raise HTTPException(400, f"ROI ids not found: {missing}")
+
+    keep_id = min(roi_ids)
+    labels = sess['labels']
+
+    # Build masks and adjacency graph
+    id_to_mask = {rid: labels == rid for rid in roi_ids}
+
+    def are_adjacent(mask_a, mask_b):
+        return (ndimage.binary_dilation(mask_a) & mask_b).any()
+
+    # BFS to verify all selected ROIs form a single connected component
+    from collections import deque
+    visited = {roi_ids[0]}
+    queue = deque([roi_ids[0]])
+    while queue:
+        current = queue.popleft()
+        for other in roi_ids:
+            if other in visited:
+                continue
+            if are_adjacent(id_to_mask[current], id_to_mask[other]):
+                visited.add(other)
+                queue.append(other)
+
+    if len(visited) != len(roi_ids):
+        raise HTTPException(400, "All selected ROIs must be connected to merge. Some selected ROIs are not adjacent to the group.")
+
+    # Merge all selected ROIs into keep_id
+    for rid in roi_ids:
+        if rid != keep_id:
+            labels[labels == rid] = keep_id
+
+    merged_regions = [r for r in measure.regionprops(labels) if r.label == keep_id]
+    if len(merged_regions) != 1:
+        raise HTTPException(500, "Merged ROI could not be converted into a valid contour")
+
+    merged_roi = get_contours(labels, merged_regions)[0]
+    sess['rois'] = [roi for roi in sess['rois'] if roi['id'] not in roi_ids]
+    sess['rois'].append(merged_roi)
+    sess['rois'].sort(key=lambda roi: roi['id'])
+    _clear_analysis_results(sess)
+
+    return {
+        'roi': merged_roi,
+        'merged_ids': roi_ids,
+        'n_rois': len(sess['rois']),
+        'rois': sess['rois'],
+    }
+
+
+@app.post("/api/transfer-rois")
+async def transfer_rois(params: TransferRoisParams):
+    source = _get_session(params.source_file_id)
+    target = _get_session(params.target_file_id)
+
+    if source['labels'] is None or not source['rois']:
+        raise HTTPException(400, "Run detection on the ROI source file first")
+
+    source_shape = (
+        source['metadata']['height'],
+        source['metadata']['width'],
+    )
+    target_shape = (
+        target['metadata']['height'],
+        target['metadata']['width'],
+    )
+    if source_shape != target_shape:
+        raise HTTPException(
+            400,
+            f"ROI transfer requires matching image dimensions. Source is {source_shape[1]}x{source_shape[0]}, "
+            f"target is {target_shape[1]}x{target_shape[0]}."
+        )
+
+    target['labels'] = source['labels'].copy()
+    target['rois'] = [dict(roi) for roi in source['rois']]
+    target['detection_params'] = source.get('detection_params')
+    target['traces'] = None
+    target['delta_f'] = None
+    target['bg_trace'] = None
+    target['bg_trace_num'] = None
+    target['bg_trace_den'] = None
+    target['durations'] = None
+    target['frequencies'] = None
+    target['rise_times'] = None
+    target['time_to_peaks'] = None
+    target['decays'] = None
+    target['decay_taus'] = None
+    target['event_times'] = None
+    target['peaks'] = None
+    target['aucs'] = None
+    target['tg_peaks'] = None
+    target['tg_slopes'] = None
+    target['tg_aucs'] = None
+    target['addback_peaks'] = None
+    target['addback_slopes'] = None
+    target['addback_aucs'] = None
+    target['addback_latencies'] = None
+
+    return {
+        'target_file_id': params.target_file_id,
+        'n_rois': len(target['rois']),
+        'rois': target['rois'],
+    }
+
+
+@app.post("/api/analyze/{file_id}")
+@limiter.limit("500/hour")
+async def analyze(request: Request, file_id: str, params: AnalyzeParams):
+    sess = _get_session(file_id)
+    if sess['labels'] is None:
+        raise HTTPException(400, "Run detection first")
+
+    roi_ids = params.roi_ids or [r['id'] for r in sess['rois']]
+    if not roi_ids:
+        raise HTTPException(400, "No ROIs selected for analysis")
+
+    # Build background mask for manual mode
+    bg_mask = None
+    if params.bg_mode == 'manual':
+        if not params.bg_polygon or len(params.bg_polygon) < 3:
+            raise HTTPException(400, "Manual background mode requires a polygon with at least 3 points")
+
+        h = sess['metadata']['height']
+        w = sess['metadata']['width']
+        bg_mask = polygon_to_mask(params.bg_polygon, (h, w))
+        if not bg_mask.any():
+            raise HTTPException(400, "Manual background polygon does not cover any image pixels")
+
+    try:
+        if params.analysis_mode == 'ratio':
+            n_ch = sess['metadata']['n_channels']
+            if params.ratio_ch_num >= n_ch or params.ratio_ch_den >= n_ch:
+                raise HTTPException(400, "Channel index out of range for ratio analysis")
+            if params.ratio_ch_num == params.ratio_ch_den:
+                raise HTTPException(400, "Numerator and denominator channels must differ")
+
+            traces, bg_trace_num, bg_trace_den = extract_ratio_traces(
+                sess['data'], sess['labels'], roi_ids,
+                ch_num=params.ratio_ch_num,
+                ch_den=params.ratio_ch_den,
+                bg_mode=params.bg_mode,
+                bg_percentile=params.bg_percentile,
+                bg_mask=bg_mask,
+                photobleach_mode=params.photobleach_mode,
+                time_axis=sess['metadata']['time_axis'],
+                cell_margin_px=params.cell_margin_px,
+            )
+            bg_trace = bg_trace_num  # default display BG
+        else:
+            traces, bg_trace = extract_traces(
+                sess['data'], sess['labels'], roi_ids,
+                channel=params.channel,
+                bg_mode=params.bg_mode,
+                bg_percentile=params.bg_percentile,
+                bg_mask=bg_mask,
+                photobleach_mode=params.photobleach_mode,
+                time_axis=sess['metadata']['time_axis'],
+                cell_margin_px=params.cell_margin_px,
+            )
+
+        delta_f = compute_delta_f(
+            traces,
+            baseline_start=params.baseline_start,
+            baseline_end=params.baseline_end,
+            baseline_percentile=params.baseline_percentile,
+        )
+        peaks, aucs, durations, frequencies, rise_times, time_to_peaks, decays, decay_taus, rise_rates, event_times = compute_summary_metrics(
+            delta_f,
+            sess['metadata']['time_axis'],
+            baseline_start=params.baseline_start,
+            baseline_end=params.baseline_end,
+            auc_start=params.auc_start,
+            auc_end=params.auc_end,
+            compute_decay_tau=params.compute_decay_tau,
+            threshold_std_multiplier=params.threshold_std_multiplier,
+            onset_fraction=params.onset_fraction,
+            width_fraction=params.width_fraction,
+        )
+        tg_peaks, tg_slopes, tg_aucs, addback_peaks, addback_slopes, addback_aucs, addback_latencies = compute_addback_metrics(
+            delta_f,
+            sess['metadata']['time_axis'],
+            tg_frame=params.tg_frame,
+            tg_end_frame=params.tg_end_frame,
+            tg_baseline_seconds=params.tg_baseline_seconds,
+            tg_slope_seconds=params.tg_slope_seconds,
+            addback_frame=params.addback_frame,
+            addback_end_frame=params.addback_end_frame,
+            addback_baseline_seconds=params.addback_baseline_seconds,
+            addback_slope_seconds=params.addback_slope_seconds,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        detail = f"Analysis failed: {type(exc).__name__}: {exc}"
+        logger.error("Analysis error for %s: %s", file_id, detail, exc_info=True)
+        raise HTTPException(500, detail) from exc
+
+    sess['traces'] = traces
+    sess['delta_f'] = delta_f
+    sess['bg_trace'] = bg_trace
+    sess['bg_trace_num'] = bg_trace_num if params.analysis_mode == 'ratio' else None
+    sess['bg_trace_den'] = bg_trace_den if params.analysis_mode == 'ratio' else None
+    sess['analysis_params'] = params.model_dump()
+    sess['peaks'] = peaks
+    sess['aucs'] = aucs
+    sess['durations'] = durations
+    sess['frequencies'] = frequencies
+    sess['rise_times'] = rise_times
+    sess['time_to_peaks'] = time_to_peaks
+    sess['decays'] = decays
+    sess['decay_taus'] = decay_taus
+    sess['rise_rates'] = rise_rates
+    sess['event_times'] = event_times
+    sess['tg_peaks'] = tg_peaks
+    sess['tg_slopes'] = tg_slopes
+    sess['tg_aucs'] = tg_aucs
+    sess['addback_peaks'] = addback_peaks
+    sess['addback_slopes'] = addback_slopes
+    sess['addback_aucs'] = addback_aucs
+    sess['addback_latencies'] = addback_latencies
+
+    return _clean_nan({
+        'time_axis':     sess['metadata']['time_axis'],
+        'traces':        {str(k): v for k, v in traces.items()},
+        'delta_f':       {str(k): v for k, v in delta_f.items()},
+        'bg_trace':      bg_trace,
+        'bg_trace_num':  bg_trace_num if params.analysis_mode == 'ratio' else None,
+        'bg_trace_den':  bg_trace_den if params.analysis_mode == 'ratio' else None,
+        'bg_mode':       params.bg_mode,
+        'photobleach_mode': params.photobleach_mode,
+        'analysis_mode': params.analysis_mode,
+        'peaks':         {str(k): v for k, v in peaks.items()},
+        'aucs':          {str(k): v for k, v in aucs.items()},
+        'durations':     {str(k): v for k, v in durations.items()},
+        'frequencies':   {str(k): v for k, v in frequencies.items()},
+        'rise_times':    {str(k): v for k, v in rise_times.items()},
+        'time_to_peaks': {str(k): v for k, v in time_to_peaks.items()},
+        'decays':        {str(k): v for k, v in decays.items()},
+        'decay_taus':    {str(k): v for k, v in decay_taus.items()} if decay_taus is not None else None,
+        'rise_rates':    {str(k): v for k, v in rise_rates.items()},
+        'event_times':   {str(k): v for k, v in event_times.items()},
+        'tg_peaks':      {str(k): v for k, v in tg_peaks.items()} if tg_peaks is not None else None,
+        'tg_slopes':     {str(k): v for k, v in tg_slopes.items()} if tg_slopes is not None else None,
+        'tg_aucs':       {str(k): v for k, v in tg_aucs.items()} if tg_aucs is not None else None,
+        'addback_peaks': {str(k): v for k, v in addback_peaks.items()} if addback_peaks is not None else None,
+        'addback_slopes': {str(k): v for k, v in addback_slopes.items()} if addback_slopes is not None else None,
+        'addback_aucs':  {str(k): v for k, v in addback_aucs.items()} if addback_aucs is not None else None,
+        'addback_latencies': {str(k): v for k, v in addback_latencies.items()} if addback_latencies is not None else None,
+    })
+
+
+@app.get("/api/export/{file_id}")
+async def export_csv(file_id: str, type: str = Query('raw')):
+    if type not in ('raw', 'delta_f'):
+        raise HTTPException(400, "type must be 'raw' or 'delta_f'")
+
+    sess = _get_session(file_id)
+    data_map = sess['traces'] if type == 'raw' else sess['delta_f']
+    if data_map is None:
+        raise HTTPException(400, "Run analysis first")
+
+    time_axis = sess['metadata']['time_axis']
+    roi_ids = sorted(data_map.keys())
+
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(['Time_s'] + [f'ROI_{rid}' for rid in roi_ids])
+    for i, t in enumerate(time_axis):
+        writer.writerow([f'{t:.6g}'] + [f'{data_map[rid][i]:.6g}' for rid in roi_ids])
+
+    stem = _safe_filename(os.path.splitext(sess.get('file_name') or 'calcium')[0])
+    suffix = 'raw_analysis' if type == 'raw' else 'deltaF'
+    fname = f'{stem}_{suffix}.csv'
+    return Response(
+        content=out.getvalue(),
+        media_type='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="{fname}"'},
+    )
+
+
+@app.get("/api/export-workbook/{file_id}")
+async def export_workbook(file_id: str):
+    sess = _get_session(file_id)
+    if sess['traces'] is None or sess['delta_f'] is None:
+        raise HTTPException(400, "Run analysis first")
+
+    workbook_bytes = _build_analysis_workbook(sess)
+    stem = _safe_filename(os.path.splitext(sess.get('file_name') or 'calcium_analysis')[0])
+    fname = f'{stem}_analysis.xlsx'
+    return Response(
+        content=workbook_bytes,
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': f'attachment; filename="{fname}"'},
+    )
+
+
+@app.get("/api/export-overlay/{file_id}")
+async def export_overlay_image(
+    file_id: str,
+    view: str = Query('frame'),
+    t: int = Query(0),
+    proj_type: str = Query('mean'),
+    mode: str = Query('channel'),
+    channel: int = Query(0),
+    ratio_ch_num: int = Query(0),
+    ratio_ch_den: int = Query(1),
+    cmin: Optional[float] = None,
+    cmax: Optional[float] = None,
+    colormap: str = Query('green'),
+):
+    if view not in ('frame', 'projection'):
+        raise HTTPException(400, "view must be 'frame' or 'projection'")
+    if proj_type not in ('mean', 'max', 'min', 'std'):
+        raise HTTPException(400, "proj_type must be 'mean', 'max', 'min', or 'std'")
+    if mode not in ('channel', 'ratio'):
+        raise HTTPException(400, "mode must be 'channel' or 'ratio'")
+
+    sess = _get_session(file_id)
+    if not sess['rois']:
+        raise HTTPException(400, "No ROIs available to overlay")
+
+    meta = sess['metadata']
+    data = sess['data']
+    t = int(np.clip(t, 0, meta['n_frames'] - 1))
+    channel = int(np.clip(channel, 0, meta['n_channels'] - 1))
+    ratio_ch_num = int(np.clip(ratio_ch_num, 0, meta['n_channels'] - 1))
+    ratio_ch_den = int(np.clip(ratio_ch_den, 0, meta['n_channels'] - 1))
+
+    if mode == 'ratio':
+        if ratio_ch_num == ratio_ch_den:
+            raise HTTPException(400, "Ratio export requires different numerator and denominator channels")
+        if view == 'projection':
+            frame = get_ratio_projection(data, proj_type=proj_type, ch_num=ratio_ch_num, ch_den=ratio_ch_den)
+        else:
+            frame = get_ratio_frame(data, t=t, ch_num=ratio_ch_num, ch_den=ratio_ch_den)
+        if cmin is None or cmax is None:
+            lo, hi = compute_ratio_percentile_contrast(data, ch_num=ratio_ch_num, ch_den=ratio_ch_den)
+            cmin = lo if cmin is None else cmin
+            cmax = hi if cmax is None else cmax
+    else:
+        if view == 'projection':
+            frame = get_projection(data, proj_type=proj_type, channel=channel)
+        else:
+            frame = data[t, channel, :, :]
+        if cmin is None:
+            cmin = sess['contrast'][channel]['min']
+        if cmax is None:
+            cmax = sess['contrast'][channel]['max']
+
+    img = frame_to_image(frame, cmin, cmax, colormap).convert('RGB')
+    draw = ImageDraw.Draw(img)
+    for roi in sess['rois']:
+        contour = roi.get('contour') or []
+        if len(contour) >= 2:
+            pts = [(float(x), float(y)) for x, y in contour]
+            draw.line(pts, fill=(255, 255, 0), width=2)
+        centroid = roi.get('centroid') or []
+        if len(centroid) == 2:
+            draw.text((float(centroid[0]) + 3, float(centroid[1]) + 3), str(roi['id']), fill=(255, 255, 255))
+
+    out = io.BytesIO()
+    img.save(out, format='PNG')
+    out.seek(0)
+    stem = _safe_filename(os.path.splitext(sess.get('file_name') or 'calcium_analysis')[0])
+    suffix = 'projection' if view == 'projection' else f'frame_{t:04d}'
+    fname = f'{stem}_roi_overlay_{suffix}.png'
+    return Response(
+        content=out.getvalue(),
+        media_type='image/png',
+        headers={'Content-Disposition': f'attachment; filename="{fname}"'},
+    )
+
+
+def _get_object_size(obj) -> int:
+    """Get size in bytes of an object (NumPy array or Python list)."""
+    if obj is None:
+        return 0
+    if hasattr(obj, 'nbytes'):
+        return int(obj.nbytes)
+    if isinstance(obj, list):
+        return sum(sys.getsizeof(item) for item in obj)
+    return 0
+
+
+@app.get("/api/memory")
+async def memory_stats():
+    proc = psutil.Process()
+    rss = proc.memory_info().rss
+
+    session_data_bytes = sum(
+        s['data'].nbytes for s in sessions.values() if s.get('data') is not None
+    )
+    session_other_bytes = sum(
+        _get_object_size(s.get('labels')) +
+        sum(_get_object_size(v) for v in (s.get('traces') or {}).values()) +
+        sum(_get_object_size(v) for v in (s.get('delta_f') or {}).values())
+        for s in sessions.values()
+    )
+
+    return {
+        'process_rss_bytes':    rss,
+        'max_rss_bytes':        MAX_PROCESS_RSS_BYTES,
+        'session_count':        len(sessions),
+        'session_data_bytes':   session_data_bytes,
+        'session_other_bytes':  session_other_bytes,
+    }
+
+
+@app.get("/api/version")
+async def version():
+    return {'version': __version__}
+
+
+# ── Latest-release cache (refreshed every 5 min) ──────────────────────────────
+_latest_release_cache = None
+_latest_release_ts = 0.0
+_LATEST_RELEASE_TTL = 300  # seconds
+_GITHUB_REPO = 'T-Luyten/Ca2tch-One'
+
+
+def _fetch_latest_release():
+    """Query GitHub releases API and return (tag_name, html_url) or (None, None)."""
+    global _latest_release_cache, _latest_release_ts
+    now = time.monotonic()
+    if _latest_release_cache is not None and (now - _latest_release_ts) < _LATEST_RELEASE_TTL:
+        return _latest_release_cache
+
+    try:
+        req = Request(
+            f'https://api.github.com/repos/{_GITHUB_REPO}/releases/latest',
+            headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'Ca2tch-One'},
+        )
+        with urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        tag = data.get('tag_name', '')
+        url = data.get('html_url', '')
+        result = (tag, url)
+    except Exception as exc:
+        logger.warning('Failed to fetch latest release from GitHub: %s', exc)
+        result = (None, None)
+
+    _latest_release_cache = result
+    _latest_release_ts = now
+    return result
+
+
+@app.get("/api/latest_version")
+async def latest_version():
+    tag, url = _fetch_latest_release()
+    return {
+        'current': __version__,
+        'latest': tag or 'unknown',
+        'url': url or '',
+    }
+
+
+@app.delete("/api/file/{file_id}")
+async def cleanup(file_id: str):
+    sessions.pop(file_id, None)
+    return {'status': 'ok'}
+
+
+# ── Helper ───────────────────────────────────────────────────────────────────
+
+def _get_session(file_id: str) -> dict:
+    if file_id not in sessions:
+        raise HTTPException(404, "Session not found — please re-upload the file")
+    sessions[file_id]['last_accessed'] = time.monotonic()
+    return sessions[file_id]
+
+
+def _clear_analysis_results(sess: dict):
+    sess['traces'] = None
+    sess['delta_f'] = None
+    sess['bg_trace'] = None
+    sess['bg_trace_num'] = None
+    sess['bg_trace_den'] = None
+    sess['analysis_params'] = None
+    sess['peaks'] = None
+    sess['aucs'] = None
+    sess['durations'] = None
+    sess['frequencies'] = None
+    sess['rise_times'] = None
+    sess['time_to_peaks'] = None
+    sess['decays'] = None
+    sess['decay_taus'] = None
+    sess['rise_rates'] = None
+    sess['event_times'] = None
+    sess['tg_peaks'] = None
+    sess['tg_slopes'] = None
+    sess['tg_aucs'] = None
+    sess['addback_peaks'] = None
+    sess['addback_slopes'] = None
+    sess['addback_aucs'] = None
+    sess['addback_latencies'] = None
+
+
+def _clean_nan(obj):
+    """Recursively replace NaN / Inf floats with None so they serialize to JSON."""
+    if isinstance(obj, dict):
+        return {k: _clean_nan(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_clean_nan(v) for v in obj]
+    try:
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+    except TypeError:
+        pass
+    return obj
+
+
+def _stringify_cell(value):
+    if value is None:
+        return ''
+    if isinstance(value, bool):
+        return 'TRUE' if value else 'FALSE'
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=True)
+    return str(value)
+
+
+def _excel_col(idx: int) -> str:
+    result = ''
+    while idx:
+        idx, rem = divmod(idx - 1, 26)
+        result = chr(65 + rem) + result
+    return result
+
+
+def _sheet_xml(rows):
+    row_xml = []
+    for r_idx, row in enumerate(rows, start=1):
+        cells = []
+        for c_idx, value in enumerate(row, start=1):
+            ref = f'{_excel_col(c_idx)}{r_idx}'
+            if value is None or value == '':
+                cells.append(f'<c r="{ref}" t="inlineStr"><is><t></t></is></c>')
+            elif isinstance(value, (int, float)) and not isinstance(value, bool) and np.isfinite(value):
+                cells.append(f'<c r="{ref}"><v>{value}</v></c>')
+            else:
+                text = escape(_stringify_cell(value))
+                cells.append(f'<c r="{ref}" t="inlineStr"><is><t>{text}</t></is></c>')
+        row_xml.append(f'<row r="{r_idx}">{"".join(cells)}</row>')
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<sheetData>{"".join(row_xml)}</sheetData>'
+        '</worksheet>'
+    )
+
+
+def _build_xlsx(sheets):
+    content_types = [
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>',
+        '<Default Extension="xml" ContentType="application/xml"/>',
+        '<Override PartName="/xl/workbook.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>',
+    ]
+    for i in range(1, len(sheets) + 1):
+        content_types.append(
+            f'<Override PartName="/xl/worksheets/sheet{i}.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        )
+    content_types.append('</Types>')
+
+    workbook_rels = [
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+    ]
+    workbook_sheets = []
+    for i, (name, _rows) in enumerate(sheets, start=1):
+        workbook_sheets.append(f'<sheet name="{escape(name)}" sheetId="{i}" r:id="rId{i}"/>')
+        workbook_rels.append(
+            f'<Relationship Id="rId{i}" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            f'Target="worksheets/sheet{i}.xml"/>'
+        )
+    workbook_rels.append('</Relationships>')
+
+    workbook_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        f'<sheets>{"".join(workbook_sheets)}</sheets>'
+        '</workbook>'
+    )
+
+    root_rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+        'Target="xl/workbook.xml"/>'
+        '</Relationships>'
+    )
+
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr('[Content_Types].xml', ''.join(content_types))
+        zf.writestr('_rels/.rels', root_rels)
+        zf.writestr('xl/workbook.xml', workbook_xml)
+        zf.writestr('xl/_rels/workbook.xml.rels', ''.join(workbook_rels))
+        for i, (_name, rows) in enumerate(sheets, start=1):
+            zf.writestr(f'xl/worksheets/sheet{i}.xml', _sheet_xml(rows))
+    return out.getvalue()
+
+
+def _rows_from_trace_map(time_axis, data_map, bg_trace=None):
+    roi_ids = sorted(data_map.keys())
+    header = ['Time_s']
+    if bg_trace is not None:
+        header.append('Background')
+    header.extend([f'ROI_{rid}' for rid in roi_ids])
+    rows = [header]
+    for i, t in enumerate(time_axis):
+        row = [float(t)]
+        if bg_trace is not None:
+            row.append(float(bg_trace[i]) if i < len(bg_trace) else '')
+        for rid in roi_ids:
+            trace = data_map[rid]
+            row.append(float(trace[i]) if i < len(trace) else '')
+        rows.append(row)
+    return rows
+
+
+def _build_analysis_workbook(sess):
+    meta = sess['metadata']
+    analysis = sess.get('analysis_params') or {}
+    detection = sess.get('detection_params') or {}
+    traces = sess['traces']
+    delta_f = sess['delta_f']
+    time_axis = meta['time_axis']
+    roi_ids = sorted(traces.keys())
+
+    metadata_rows = [['Field', 'Value']]
+    metadata_rows.extend([
+        ['file_name', sess.get('file_name', '')],
+        ['n_frames', meta['n_frames']],
+        ['n_channels', meta['n_channels']],
+        ['width', meta['width']],
+        ['height', meta['height']],
+        ['pixel_size', meta.get('pixel_size', '')],
+        ['dtype', meta.get('dtype', '')],
+        ['time_interval', meta.get('time_interval', '')],
+        ['channel_names', meta.get('channel_names', [])],
+        ['dropped_axes', meta.get('dropped_axes', {})],
+        ['exported_at_utc', datetime.now(timezone.utc).isoformat()],
+    ])
+
+    settings_rows = [['Setting', 'Value']]
+    for key in [
+        'analysis_mode', 'channel', 'ratio_ch_num', 'ratio_ch_den',
+        'baseline_start', 'baseline_end', 'baseline_percentile', 'auc_start', 'auc_end',
+        'bg_mode', 'bg_percentile', 'bg_polygon', 'photobleach_mode',
+        'tg_frame', 'tg_end_frame', 'tg_baseline_seconds', 'tg_slope_seconds',
+        'addback_frame', 'addback_end_frame', 'addback_baseline_seconds', 'addback_slope_seconds',
+        'roi_ids',
+    ]:
+        settings_rows.append([key, analysis.get(key, '')])
+    for key in [
+        'channel', 'projection_type', 'min_size', 'max_size',
+        'threshold_adjust', 'smooth_sigma', 'background_radius',
+        'seed_sigma', 'allow_edge_rois',
+    ]:
+        settings_rows.append([f'detection_{key}', detection.get(key, '')])
+
+    roi_rows = [[
+        'roi_id', 'area_px', 'centroid_x', 'centroid_y',
+        'bbox_x1', 'bbox_y1', 'bbox_x2', 'bbox_y2', 'contour_json',
+    ]]
+    for roi in sorted(sess['rois'], key=lambda item: item['id']):
+        bbox = roi.get('bbox', ['', '', '', ''])
+        centroid = roi.get('centroid', ['', ''])
+        roi_rows.append([
+            roi['id'],
+            roi.get('area', ''),
+            centroid[0],
+            centroid[1],
+            bbox[0], bbox[1], bbox[2], bbox[3],
+            roi.get('contour', []),
+        ])
+
+    metric_rows = [[
+        'roi_id', 'peak', 'auc', 'event_fwhm', 'event_frequency',
+        'rise_time_10pct_to_peak', 'time_to_peak_window_start', 'decay_t_half', 'decay_tau', 'rate_of_rise',
+        'tg_peak', 'tg_slope', 'tg_auc',
+        'addback_peak', 'addback_slope', 'addback_auc', 'addback_latency',
+        'event_times_s',
+    ]]
+    def _sget(d, key, default=''):
+        return d.get(key, default) if d is not None else default
+
+    for rid in roi_ids:
+        metric_rows.append([
+            rid,
+            _sget(sess['peaks'], rid),
+            _sget(sess['aucs'], rid),
+            _sget(sess['durations'], rid),
+            _sget(sess['frequencies'], rid),
+            _sget(sess['rise_times'], rid),
+            _sget(sess['time_to_peaks'], rid),
+            _sget(sess['decays'], rid),
+            _sget(sess['decay_taus'], rid),
+            _sget(sess['rise_rates'], rid),
+            _sget(sess['tg_peaks'], rid),
+            _sget(sess['tg_slopes'], rid),
+            _sget(sess['tg_aucs'], rid),
+            _sget(sess['addback_peaks'], rid),
+            _sget(sess['addback_slopes'], rid),
+            _sget(sess['addback_aucs'], rid),
+            _sget(sess['addback_latencies'], rid),
+            sess['event_times'].get(rid, []),
+        ])
+
+    sheets = [
+        ('Metadata', metadata_rows),
+        ('Settings', settings_rows),
+        ('ROI_List', roi_rows),
+        ('Raw_Traces', _rows_from_trace_map(time_axis, traces, sess.get('bg_trace'))),
+        ('DeltaF', _rows_from_trace_map(time_axis, delta_f)),
+        ('Metrics', metric_rows),
+    ]
+    return _build_xlsx(sheets)
+
+
+# ── Static frontend (mounted last so API routes take priority) ────────────────
+
+_frontend = os.path.join(os.path.dirname(__file__), '..', 'frontend')
+if os.path.isdir(_frontend):
+    app.mount("/", StaticFiles(directory=_frontend, html=True), name="frontend")

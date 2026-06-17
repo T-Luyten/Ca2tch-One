@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" href="CatchOne.png">
+  <title>Ca2+tch-One</title>
+  <link rel="stylesheet" href="style.css?v=20260419h">
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" defer></script>
+</head>
+<body>
+  <div id="splash-screen">
+    <img src="CatchOne.png" alt="Ca2+tch-One" id="splash-logo">
+  </div>
+
+  <div id="upload-bar"><div id="upload-bar-fill"></div></div>
+  <div id="update-banner" class="hidden">
+    <span id="update-banner-text"></span>
+    <a id="update-banner-link" href="#" target="_blank" rel="noopener">View release →</a>
+    <button id="update-banner-close" title="Dismiss">×</button>
+  </div>
+  <div id="header">
+    <img id="logo" src="CatchOne.png" alt="logo" style="height:50px;width:auto">
+    <h1>Ca2+tch-One <span id="app-version"></span></h1>
+    <label class="upload-label" for="source-file-input">Load ROI Source</label>
+    <input type="file" id="source-file-input" accept=".nd2,.czi" hidden>
+    <label class="upload-label" for="measure-file-input">Load Measurement</label>
+    <input type="file" id="measure-file-input" accept=".nd2,.czi" hidden>
+    <span id="file-info">ROI source: none | Measurement: none</span>
+    <span id="status-bar"></span>
+    <span id="mem-readout" title="process RSS / ND2 data in sessions / sessions open">
+      <span id="mem-bar-wrap"><span id="mem-bar-fill"></span></span>
+      <span id="mem-text">mem: —</span>
+    </span>
+  </div>
+
+  <div id="main">
+    <!-- ── Image viewer ───────────────────────────── -->
+    <section id="viewer-section">
+      <div id="viewer-grid">
+        <div class="viewer-pane" id="viewer-source-pane">
+          <div class="viewer-pane-header">
+            <span class="viewer-pane-title">ROI Source</span>
+            <span class="viewer-pane-status" id="source-view-status">No source</span>
+          </div>
+          <div class="canvas-container" id="source-canvas-container">
+            <canvas id="source-image-canvas"></canvas>
+            <canvas id="source-roi-canvas"></canvas>
+          </div>
+          <div class="viewer-controls">
+            <div class="ctrl-row">
+              <span class="ctrl-label">Frame</span>
+              <input type="range" id="source-frame-slider" min="0" max="0" value="0">
+              <span class="ctrl-value" id="source-frame-label">— / —</span>
+              <span class="ctrl-value" id="source-time-label"></span>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Channel</span>
+              <select id="source-channel-select"></select>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Contrast</span>
+              <span style="color:var(--muted)">Min</span>
+              <input type="number" id="source-contrast-min" step="1" value="0">
+              <span style="color:var(--muted)">Max</span>
+              <input type="number" id="source-contrast-max" step="1" value="65535">
+              <button id="source-auto-contrast-btn" title="Set min/max from percentile stretch">Auto</button>
+              <input type="number" id="source-p-low" value="1" min="0" max="49.9" step="0.5" style="width:3.5em" title="Low percentile for auto contrast">
+              <span style="color:var(--muted)">–</span>
+              <input type="number" id="source-p-high" value="99.5" min="50.1" max="100" step="0.5" style="width:3.8em" title="High percentile for auto contrast">
+              <span style="color:var(--muted)">%</span>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Colormap</span>
+              <select id="source-colormap-select">
+                <option value="green">Green (GFP)</option>
+                <option value="red">Red (mCherry)</option>
+                <option value="orange">Orange (tdTomato)</option>
+                <option value="cyan">Cyan (CFP)</option>
+                <option value="magenta">Magenta</option>
+                <option value="blue">Blue (DAPI)</option>
+                <option value="rainbow">Rainbow (ratio)</option>
+                <option value="gray">Gray</option>
+                <option value="hot">Hot</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="viewer-pane" id="viewer-measure-pane">
+          <div class="viewer-pane-header">
+            <span class="viewer-pane-title">Measurement</span>
+            <span class="viewer-pane-status" id="measure-view-status">No target</span>
+          </div>
+          <div class="canvas-container" id="measure-canvas-container">
+            <canvas id="measure-image-canvas"></canvas>
+            <canvas id="measure-roi-canvas"></canvas>
+          </div>
+          <div class="viewer-controls">
+            <div class="ctrl-row">
+              <span class="ctrl-label">Frame</span>
+              <input type="range" id="measure-frame-slider" min="0" max="0" value="0">
+              <span class="ctrl-value" id="measure-frame-label">— / —</span>
+              <span class="ctrl-value" id="measure-time-label"></span>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Channel</span>
+              <select id="measure-channel-select"></select>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Contrast</span>
+              <span style="color:var(--muted)">Min</span>
+              <input type="number" id="measure-contrast-min" step="1" value="0">
+              <span style="color:var(--muted)">Max</span>
+              <input type="number" id="measure-contrast-max" step="1" value="65535">
+              <button id="measure-auto-contrast-btn" title="Set min/max from percentile stretch">Auto</button>
+              <input type="number" id="measure-p-low" value="1" min="0" max="49.9" step="0.5" style="width:3.5em" title="Low percentile for auto contrast">
+              <span style="color:var(--muted)">–</span>
+              <input type="number" id="measure-p-high" value="99.5" min="50.1" max="100" step="0.5" style="width:3.8em" title="High percentile for auto contrast">
+              <span style="color:var(--muted)">%</span>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Colormap</span>
+              <select id="measure-colormap-select">
+                <option value="green">Green (GFP)</option>
+                <option value="red">Red (mCherry)</option>
+                <option value="orange">Orange (tdTomato)</option>
+                <option value="cyan">Cyan (CFP)</option>
+                <option value="magenta">Magenta</option>
+                <option value="blue">Blue (DAPI)</option>
+                <option value="rainbow">Rainbow (ratio)</option>
+                <option value="gray">Gray</option>
+                <option value="hot">Hot</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Controls sidebar ──────────────────────── -->
+    <aside id="controls-section">
+
+      <div class="panel">
+        <button class="btn-full btn-primary" id="detect-btn" disabled>Detect Cells On Source</button>
+        <div id="detect-status" class="status-hint"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Cell Detection</div>
+
+        <div class="param-row">
+          <span class="param-label" title="Frame statistic used to build the detection image. Mean = average signal (less noise). Max = brightest frame (reveals dim cells). Std = standard deviation (highlights active cells).">Projection</span>
+          <select id="proj-type" title="Frame statistic used to build the detection image. Mean = average signal (less noise). Max = brightest frame (reveals dim cells). Std = standard deviation (highlights active cells).">
+            <option value="mean">Mean</option>
+            <option value="max">Max</option>
+            <option value="std">Std</option>
+          </select>
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Multiplier on the auto-computed detection threshold. >1 = stricter (fewer ROIs); <1 = more inclusive (more ROIs). Adjust when too many background blobs or real cells are missed.">Threshold adj.</span>
+          <input type="range" id="thresh-adj" min="0.2" max="3.0" step="0.05" value="1.0" title="Multiplier on the auto-computed detection threshold. >1 = stricter (fewer ROIs); <1 = more inclusive (more ROIs).">
+          <span class="param-value" id="thresh-adj-val">1.00</span>
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Gaussian blur applied to the projection before thresholding. Higher values reduce shot noise but may merge touching cells. Typical range: 1–4 px.">Smooth σ (px)</span>
+          <input type="range" id="smooth-sigma" min="0.5" max="12" step="0.5" value="2.0" title="Gaussian blur sigma in pixels. Higher = smoother but may merge adjacent cells.">
+          <span class="param-value" id="smooth-sigma-val">2.0</span>
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Radius of the rolling-ball background subtraction disk. Should exceed the diameter of the largest expected cell so only slow background variation is removed.">BG radius (px)</span>
+          <input type="number" id="bg-radius" value="30" min="3" max="200" title="Rolling-ball radius in pixels. Should be larger than the widest expected cell diameter.">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Smoothing of the distance-transform map before finding watershed seeds. Higher values merge adjacent cell centres; lower values may over-split large cells.">Seed σ (px)</span>
+          <input type="range" id="seed-sigma" min="0.2" max="4.0" step="0.1" value="1.0" title="Gaussian sigma for smoothing the distance map before seed detection.">
+          <span class="param-value" id="seed-sigma-val">1.0</span>
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Discard detected regions smaller than this area. Set to roughly the area of the smallest real cell to suppress noise blobs.">Min size (px²)</span>
+          <input type="number" id="min-size" value="100" min="4" max="100000" title="Minimum ROI area in pixels². Smaller regions are discarded as noise.">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Discard detected regions larger than this area. Set to roughly the area of the largest real cell to suppress merged clusters.">Max size (px²)</span>
+          <input type="number" id="max-size" value="10000" min="10" title="Maximum ROI area in pixels². Larger regions are discarded as merged clusters.">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Watershed roundness penalty (0 = unconstrained, 1 = maximally circular). Higher values prevent elongated ROIs but may shrink irregular cells.">Compactness</span>
+          <input type="number" id="watershed-compactness" value="0.001" min="0" max="1" step="0.001"
+            title="Watershed roundness penalty (0 = unconstrained, 1 = maximally circular). Higher values prevent elongated ROIs but may shrink irregular cells.">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="If checked, ROIs that touch the image border are kept. Uncheck to discard cells that are only partially visible at the edge of the field.">Keep edge ROIs</span>
+          <input type="checkbox" id="allow-edge-rois" title="Keep ROIs touching the image border (partially visible cells).">
+        </div>
+
+        <div class="panel-subtitle">ROI Tools</div>
+        <button class="btn-full" id="ruler-btn" disabled>Measure On Source</button>
+        <div id="ruler-readout" class="ruler-readout" style="display:none"></div>
+        <button class="btn-full" id="roi-add-btn" style="margin-top:4px">Add ROI On Source</button>
+        <button class="btn-full" id="roi-circle-add-btn" style="margin-top:4px">Auto-Detect Cell</button>
+        <div class="btn-row" style="margin-top:4px">
+          <button id="roi-merge-btn">Merge ROIs</button>
+          <button id="roi-delete-btn">Delete ROIs</button>
+        </div>
+        <button class="btn-full" id="roi-cancel-btn" style="display:none;margin-top:4px">Cancel Drawing</button>
+        <button class="btn-full" id="roi-circle-cancel-btn" style="display:none;margin-top:4px">Cancel Drawing</button>
+        <div id="roi-draw-hint" class="panel-hint" style="display:none;margin-top:4px">
+          Click to place vertices on the ROI source viewer, then double-click to finish.
+        </div>
+        <div id="roi-circle-draw-hint" class="panel-hint" style="display:none;margin-top:4px">
+          Click on a cell to auto-detect · Scroll wheel to grow/shrink · Enter or click again to keep · Esc to discard
+        </div>
+
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Dataset Pairing</div>
+        <div class="panel-hint">Detect ROIs on the source file, then copy them to the measurement file before running analysis.</div>
+        <button class="btn-full btn-primary" id="transfer-rois-btn" disabled>Copy ROIs To Measurement</button>
+        <button class="btn-full" id="use-source-as-measure-btn" disabled>Use Source As Measurement</button>
+        <div id="transfer-status" class="status-hint"></div>
+      </div>
+
+      <!-- Background correction -->
+      <div class="panel">
+        <div class="panel-title">Background Correction</div>
+
+        <div class="param-row">
+          <span class="param-label" title="None: no background subtraction. Auto: estimate background from pixels outside all ROIs (recommended). Manual ROI: draw a custom background region on the image.">Mode</span>
+          <select id="bg-mode">
+            <option value="none">None</option>
+            <option value="auto" selected>Auto</option>
+            <option value="manual">Manual ROI</option>
+          </select>
+        </div>
+
+        <!-- Background statistic -->
+        <div id="bg-auto-opts" style="display:none">
+          <div class="param-row">
+            <span class="param-label" title="Percentile of background pixels used as the per-frame background value. 50 = median (robust default). Use lower values (e.g. 25) in sparse or autofluorescent preparations where the median may include stray signal. Higher values raise the background estimate and reduce ΔF/F₀ amplitude.">BG percentile</span>
+            <input type="range" id="bg-percentile" min="5" max="95" step="5" value="50">
+            <span class="param-value" id="bg-percentile-val">50%</span>
+          </div>
+          <div class="panel-hint">50 = median (default). Lower → larger ΔF/F₀. Use ~25 for sparse or autofluorescent preparations. ROI pixels and a surrounding halo are excluded.</div>
+        </div>
+
+        <!-- Manual options -->
+        <div id="bg-manual-opts" style="display:none">
+          <button id="bg-draw-btn" class="btn-full" style="margin-top:4px">Draw BG Region</button>
+          <div id="bg-draw-hint" class="panel-hint">Click to add points · Double-click to close · Esc to cancel</div>
+          <button id="bg-clear-btn" style="margin-top:4px;width:100%;display:none">Clear BG Region</button>
+        </div>
+      </div>
+
+      <!-- Analysis -->
+      <div class="panel">
+        <div class="panel-title">Analysis</div>
+
+        <div class="param-row">
+          <span class="param-label" title="Single channel: computes ΔF/F₀ from one fluorescence channel. Fura-2 ratio: computes 340/380 nm excitation ratio for calibrated [Ca²⁺] measurements.">Mode</span>
+          <select id="analysis-mode">
+            <option value="single">Single channel</option>
+            <option value="ratio">Fura-2 ratio</option>
+          </select>
+        </div>
+
+        <!-- Ratio channel selectors (Fura-2 only) -->
+        <div id="ratio-opts" style="display:none">
+          <div class="param-row">
+            <span class="param-label" title="Channel recorded at 340 nm excitation (Ca²⁺-bound Fura-2). Used as the ratio numerator.">340 nm ch</span>
+            <select id="ratio-ch-num"></select>
+          </div>
+          <div class="param-row">
+            <span class="param-label" title="Channel recorded at 380 nm excitation (Ca²⁺-free Fura-2). Used as the ratio denominator.">380 nm ch</span>
+            <select id="ratio-ch-den"></select>
+          </div>
+        </div>
+
+        <div class="panel-subtitle">Baseline &amp; Integration</div>
+
+        <div class="param-row">
+          <span class="param-label" title="First frame of the baseline window used to compute F₀ (resting fluorescence). F₀ is averaged over baseline start → end.">Baseline start (frame)</span>
+          <input type="number" id="baseline-start" value="0" min="0">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Last frame of the baseline window used to compute F₀. Frames between start and end are used to estimate the resting fluorescence level.">Baseline end (frame)</span>
+          <input type="number" id="baseline-end" value="0" min="0">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Percentile used to estimate F₀ from the baseline window. 8 = common Ca²⁺ default (resting fluorescence). 50 = median. 0 = mean (legacy, not recommended).">F₀ percentile</span>
+          <input type="number" id="baseline-percentile" value="8" min="0" max="100" step="1"
+            title="Percentile used to estimate F₀ from the baseline window. 8 = common Ca²⁺ default. 50 = median. 0 = mean (legacy).">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="First frame of the analysis window. Used for AUC integration and event statistics. Set to 0 to start at the beginning of the recording.">Window start (frame)</span>
+          <input type="number" id="auc-start" value="0" min="0">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Last frame of the analysis window. Used for AUC integration and event statistics. Set to 0 to use the full recording.">Window end (frame)</span>
+          <input type="number" id="auc-end" value="0" min="0">
+        </div>
+
+        <div class="panel-subtitle">Signal Processing</div>
+
+        <div class="param-row">
+          <span class="param-label" title="Correction applied to raw fluorescence before ΔF/F₀: None = no correction; Linear = subtract a fitted linear trend; Single exponential = fit and remove an exponential decay due to bleaching.">Photobleach</span>
+          <select id="photobleach-mode">
+            <option value="none" selected>None</option>
+            <option value="linear">Linear</option>
+            <option value="single_exp">Single exponential</option>
+          </select>
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Pixels dilated around each ROI before background estimation. Excludes the cell fluorescence halo. Increase for high-magnification images.">Cell margin (px)</span>
+          <input type="number" id="cell-margin-px" value="5" min="0" max="50" step="1"
+            title="Pixels dilated around each ROI before background estimation. Excludes the cell fluorescence halo. Increase for high-magnification images.">
+        </div>
+
+        <div class="panel-subtitle">Event Detection</div>
+
+        <div class="param-row">
+          <span class="param-label" title="Threshold = baseline median + N × MAD. Higher = more conservative (fewer events detected).">Event threshold (×MAD)</span>
+          <input type="number" id="threshold-std-multiplier" value="2" min="0.1" max="20" step="0.5"
+            title="Threshold = baseline median + N × MAD. Higher = more conservative (fewer events detected).">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Event duration is measured as the width at this % of peak amplitude above baseline (default 50% = FWHM). Lower = wider reported duration.">Duration width (%)</span>
+          <input type="number" id="width-fraction" value="50" min="1" max="99" step="5"
+            title="Event duration is measured as the width at this % of peak amplitude above baseline (default 50% = FWHM). Lower = wider reported duration.">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Rise time is measured from when the signal crosses this % of peak amplitude above baseline. Higher = later onset, shorter reported rise time.">Onset threshold (%)</span>
+          <input type="number" id="onset-fraction" value="10" min="1" max="99" step="5"
+            title="Rise time is measured from when the signal crosses this % of peak amplitude above baseline. Higher = later onset, shorter reported rise time.">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Fit a mono-exponential decay to the falling phase of each event and report the time constant τ. More informative than t½ but slower to compute.">Compute decay tau</span>
+          <input type="checkbox" id="compute-decay-tau" title="Fit mono-exponential decay τ to each event's falling phase.">
+        </div>
+
+        <div class="panel-subtitle">TG Assay (Thapsigargin)</div>
+        <div class="panel-hint">Set TG frame to 0 to disable this assay.</div>
+
+        <div class="param-row">
+          <span class="param-label" title="Frame at which thapsigargin (SERCA pump inhibitor) is added. Marks the start of ER Ca²⁺ leak measurement. Set to 0 to disable TG assay.">TG frame</span>
+          <input type="number" id="tg-frame" value="0" min="0">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Last frame of the TG assay window. Frames beyond this are excluded from TG metrics. Set to 0 to use the end of the recording.">TG end frame</span>
+          <input type="number" id="tg-end-frame" value="0" min="0">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Duration of the pre-stimulus baseline window used to compute the resting level before TG addition.">TG baseline (s)</span>
+          <input type="number" id="tg-baseline-seconds" value="5" min="0.5" step="0.5">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Duration of the post-stimulus window used to fit the initial leak slope after TG addition.">TG slope (s)</span>
+          <input type="number" id="tg-slope-seconds" value="5" min="0.5" step="0.5">
+        </div>
+        <div id="tg-assay-hint" class="analysis-hint"></div>
+
+        <div class="panel-subtitle">Ca²⁺ Add-Back Assay</div>
+        <div class="panel-hint">Set add-back frame to 0 to disable this assay.</div>
+
+        <div class="param-row">
+          <span class="param-label" title="Frame at which extracellular Ca²⁺ is re-introduced after store depletion. Marks the start of store-operated entry measurement. Set to 0 to disable add-back assay.">Ca add-back frame</span>
+          <input type="number" id="addback-frame" value="0" min="0">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Last frame of the Ca add-back assay window. Set to 0 to use the end of the recording.">Add-back end frame</span>
+          <input type="number" id="addback-end-frame" value="0" min="0">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Duration of the pre-stimulus baseline window used to compute the resting level before Ca add-back.">Add-back baseline (s)</span>
+          <input type="number" id="addback-baseline-seconds" value="5" min="0.5" step="0.5">
+        </div>
+
+        <div class="param-row">
+          <span class="param-label" title="Duration of the post-stimulus window used to fit the initial entry slope after Ca add-back.">Add-back slope (s)</span>
+          <input type="number" id="addback-slope-seconds" value="5" min="0.5" step="0.5">
+        </div>
+        <div id="addback-assay-hint" class="analysis-hint"></div>
+
+        <button class="btn-full btn-primary" id="analyze-btn" disabled>Analyze Measurement File</button>
+      </div>
+
+      <!-- ROI list -->
+      <div class="panel" id="roi-panel">
+        <div id="roi-list-header">
+          <div class="panel-title">ROIs <span id="roi-count"></span></div>
+          <button id="sel-all-btn" title="Select all ROIs">All</button>
+          <button id="sel-none-btn" title="Deselect all ROIs">None</button>
+        </div>
+        <div id="roi-list-context"></div>
+        <div id="roi-list"></div>
+      </div>
+
+    </aside>
+  </div>
+
+  <!-- ── Plots ──────────────────────────────────────── -->
+  <section id="plots-section">
+    <div id="plot-tabs">
+      <button class="tab-btn active" data-tab="raw" id="tab-raw">Raw Fluorescence (F)</button>
+      <button class="tab-btn" data-tab="delta" id="tab-delta">ΔF / F₀</button>
+      <button class="tab-btn" data-tab="summary" id="tab-summary">Peak + AUC</button>
+      <button class="tab-btn" data-tab="duration" id="tab-duration">Event FWHM</button>
+      <button class="tab-btn" data-tab="frequency" id="tab-frequency">Event Raster</button>
+      <button class="tab-btn" data-tab="latency" id="tab-latency">Rise Time</button>
+      <button class="tab-btn" data-tab="timepeak" id="tab-timepeak">Time To Peak</button>
+      <button class="tab-btn" data-tab="decay" id="tab-decay">Decay t1/2</button>
+      <button class="tab-btn" data-tab="decay-tau" id="tab-decay-tau">Decay tau</button>
+      <button class="tab-btn" data-tab="rise" id="tab-rise">Rate Of Rise</button>
+      <button class="tab-btn" data-tab="tg" id="tab-tg">TG Leak</button>
+      <button class="tab-btn" data-tab="addback" id="tab-addback">Ca Add-Back</button>
+    </div>
+    <div id="plot-raw"     class="plot-pane"></div>
+    <div id="plot-delta"   class="plot-pane" style="display:none"></div>
+    <div id="plot-summary" class="plot-pane" style="display:none">
+      <div id="plot-peak"></div>
+      <div id="plot-auc"></div>
+    </div>
+    <div id="plot-duration" class="plot-pane" style="display:none"></div>
+    <div id="plot-frequency" class="plot-pane" style="display:none">
+      <div class="raster-controls">
+        <label>Sort by
+          <select id="raster-sort">
+            <option value="id">ROI ID</option>
+            <option value="count">Event count</option>
+            <option value="first">First event</option>
+            <option value="peak">Peak amplitude</option>
+          </select>
+        </label>
+      </div>
+      <div id="plot-frequency-chart"></div>
+    </div>
+    <div id="plot-latency" class="plot-pane" style="display:none"></div>
+    <div id="plot-timepeak" class="plot-pane" style="display:none"></div>
+    <div id="plot-decay" class="plot-pane" style="display:none"></div>
+    <div id="plot-decay-tau" class="plot-pane" style="display:none"></div>
+    <div id="plot-rise" class="plot-pane" style="display:none"></div>
+    <div id="plot-tg" class="plot-pane assay-pane" style="display:none">
+      <div id="plot-tg-peak"></div>
+      <div id="plot-tg-slope"></div>
+      <div id="plot-tg-auc"></div>
+    </div>
+    <div id="plot-addback" class="plot-pane assay-pane" style="display:none">
+      <div id="plot-addback-peak"></div>
+      <div id="plot-addback-slope"></div>
+      <div id="plot-addback-auc"></div>
+      <div id="plot-addback-latency"></div>
+    </div>
+    <div class="btn-row" id="export-row" style="display:none">
+      <button id="export-raw-btn">Export Raw CSV</button>
+      <button id="export-workbook-btn">Export Analysis XLSX</button>
+      <button id="export-overlay-btn">Export ROI Overlay PNG</button>
+      <button id="export-projection-overlay-btn">Export Projection ROI PNG</button>
+    </div>
+  </section>
+
+  <script src="app.js?v=20260414a"></script>
+</body>
+</html>
